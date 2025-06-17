@@ -3,6 +3,7 @@ tokens: std.ArrayList(Token),
 line: usize = 1,
 start: usize = 0,
 current: usize = 0,
+error_reporter: *ErrorReporter,
 
 const Self = @This();
 
@@ -10,21 +11,55 @@ const LexerOptions = struct {
     print_tokens: bool = false,
 };
 
-pub fn parseTokens(allocator: Allocator, src: []const u8, opt: LexerOptions) std.ArrayList(Token) {
+pub fn parseTokens(
+    allocator: Allocator,
+    src: []const u8,
+    error_reporter: *ErrorReporter,
+    opt: LexerOptions,
+) LexerError!std.ArrayList(Token) {
     var lexer = Self{
         .src = src,
+        .error_reporter = error_reporter,
         .tokens = std.ArrayList(Token).init(allocator),
     };
+    errdefer lexer.tokens.deinit();
+
     lexer.scan();
+
+    if (lexer.error_reporter.error_items.items.len > 0) {
+        lexer.error_reporter.printErrorOnStdErr();
+        return LexerError.CompilerErrorForUser;
+    }
+
     if (opt.print_tokens) printTokens(lexer.tokens, std.io.getStdOut().writer().any());
+
     return lexer.tokens;
+}
+
+fn appendError(s: *Self, comptime fmt: []const u8, args: anytype) void {
+    s.error_reporter.addError(s.line, s.start, fmt, args);
+
+    // If error occurs, go to next line and start parsing again
+    // maybe not full proof, but maybe good enough to find as much error as possible
+    while (!s.isAtEnd(0) and s.peek() != '\n') {
+        s.current += 1;
+    }
+    s.current += 1;
 }
 
 fn printTokens(tokens: std.ArrayList(Token), writer: std.io.AnyWriter) void {
     writer.print("-- Lexer Print --\n", .{}) catch unreachable;
     writer.print("{s:>20}\t{s:>10}\t{s}\n", .{ "TokenType", "Lexeme", "Location" }) catch unreachable;
     for (tokens.items) |item| {
-        writer.print("{s:>20}\t{s:>10}\t{d}:{d}\n", .{ @tagName(item.type), item.lexeme, item.line, item.start }) catch unreachable;
+        writer.print(
+            "{s:>20}\t{s:>10}\t{d}:{d}\n",
+            .{
+                @tagName(item.type),
+                item.lexeme,
+                item.line,
+                item.start,
+            },
+        ) catch unreachable;
     }
 }
 
@@ -49,8 +84,7 @@ fn scan(s: *Self) void {
             '}' => s.addToken("}", .rcurly),
             ';' => s.addToken(";", .semicolon),
             else => {
-                // TODO: Error Reporter needed!!!
-                log.debug("Unknown character: {c}", .{c});
+                s.appendError("Unknown character: {c}\n", .{c});
             },
         }
     }
@@ -58,13 +92,12 @@ fn scan(s: *Self) void {
 
 fn number(s: *Self) void {
     var found_alphabet = false;
-    while (!found_alphabet and !s.isAtEnd(0) and std.ascii.isDigit(s.peek())) {
+    while (!found_alphabet and !s.isAtEnd(0) and (std.ascii.isDigit(s.peek()) or std.ascii.isAlphabetic(s.peek()) or s.peek() == '_')) {
         if (std.ascii.isAlphabetic(s.peek())) found_alphabet = true;
         _ = s.consumeAny();
     }
     if (found_alphabet) {
-        // TODO
-        // Error Reporter needed!!!
+        s.appendError("invalid number\n", .{});
     }
     const lexeme = s.src[s.start..s.current];
     s.addToken(lexeme, .int_literal);
@@ -108,6 +141,7 @@ fn peekOffset(s: *const Self, offset: usize) u8 {
 }
 
 fn peek(s: *const Self) u8 {
+    if (s.isAtEnd(0)) return 0;
     return s.src[s.current];
 }
 
@@ -115,7 +149,7 @@ fn isAtEnd(s: *const Self, offset: usize) bool {
     return s.current + offset >= s.src.len;
 }
 
-pub const LexerError = error{};
+const LexerError = CommonError;
 
 pub const Token = struct {
     type: TokenType,
@@ -145,3 +179,5 @@ pub const TokenType = enum {
 const std = @import("std");
 const log = std.log;
 const Allocator = std.mem.Allocator;
+const ErrorReporter = @import("../ErrorReporter.zig");
+const CommonError = @import("../common_error.zig").CommonError;

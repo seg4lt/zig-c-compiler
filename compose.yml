@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    command: ["tail", "-f", "/dev/null"]
+    platform: linux/amd64
+    working_dir: /app
+    # ports:
+    volumes:
+      - "./:/app"

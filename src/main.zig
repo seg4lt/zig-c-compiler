@@ -12,9 +12,11 @@ fn runCompiler(allocator: Allocator) !void {
     const src = try preprocessor(allocator, args.src_path);
     defer allocator.free(src);
     // log.debug("Src: \n{s}", .{src});
+    var err_reporter: ErrorReporter = .init(allocator, src, args.src_path);
+    defer err_reporter.deinit();
 
     const lex_tokens: ?std.ArrayList(Lexer.Token) = if (args.flag.lex)
-        Lexer.parseTokens(allocator, src, .{ .print_tokens = true })
+        try Lexer.parseTokens(allocator, src, &err_reporter, .{ .print_tokens = true })
     else
         null;
 
@@ -35,6 +37,8 @@ const builtin = @import("builtin");
 const CliArgs = @import("CliArgs.zig");
 const Lexer = @import("Lexer/Lexer.zig");
 const compiler_driver = @import("compiler_driver.zig");
+const ErrorReporter = @import("ErrorReporter.zig");
+const CommonError = @import("common_error.zig").CommonError;
 const preprocessor = compiler_driver.preprocessor;
 const Allocator = std.mem.Allocator;
 const log = std.log;
