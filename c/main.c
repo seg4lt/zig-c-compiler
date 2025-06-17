@@ -1,4 +1,2 @@
-int main(void)
-{
-    return @b;
-}
+/* A single backslash is not a valid token. */
+\

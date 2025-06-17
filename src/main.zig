@@ -38,9 +38,12 @@ const CliArgs = @import("CliArgs.zig");
 const Lexer = @import("Lexer/Lexer.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
-const CommonError = @import("common_error.zig").CommonError;
 const preprocessor = compiler_driver.preprocessor;
 const Allocator = std.mem.Allocator;
 const log = std.log;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+
+test {
+    _ = @import("std").testing.refAllDeclsRecursive(@This());
+}

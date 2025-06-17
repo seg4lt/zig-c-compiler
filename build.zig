@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
 fn setupTest(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const test_step = b.step("test", "Run all tests");
     const t = b.addTest(.{
-        .root_source_file = b.path("src/tests.zig"),
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });

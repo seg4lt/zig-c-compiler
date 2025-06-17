@@ -7,14 +7,7 @@ pub fn preprocessor(allocator: Allocator, src_path: []const u8) ![]u8 {
     const preprocessed_path = std.fmt.allocPrint(allocator, "{s}.i", .{src_path_no_ext}) catch unreachable;
     defer allocator.free(preprocessed_path);
 
-    var child = std.process.Child.init(&[_][]const u8{
-        "gcc",
-        "-E",
-        "-P",
-        src_path,
-        "-o",
-        preprocessed_path,
-    }, allocator);
+    var child = std.process.Child.init(&[_][]const u8{ "gcc", "-E", "-P", src_path, "-o", preprocessed_path }, allocator);
     const result = child.spawnAndWait() catch unreachable;
     std.debug.assert(result == .Exited);
 
