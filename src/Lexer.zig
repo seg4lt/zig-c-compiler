@@ -27,7 +27,7 @@ pub fn parseTokens(
     lexer.scan();
 
     if (lexer.error_reporter.error_items.items.len > 0) {
-        lexer.error_reporter.printErrorOnStdErr();
+        lexer.error_reporter.printError();
         return LexerError.LexerFailed;
     }
 
@@ -223,9 +223,9 @@ pub const TokenType = enum {
 const std = @import("std");
 const log = std.log;
 const Allocator = std.mem.Allocator;
-const ErrorReporter = @import("../ErrorReporter.zig");
+const ErrorReporter = @import("ErrorReporter.zig");
 
 test {
-    const tests = @import("lexer_test.zig");
+    const tests = @import("tests/lexer_test.zig");
     @import("std").testing.refAllDeclsRecursive(tests);
 }

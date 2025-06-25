@@ -1,12 +1,14 @@
 const std = @import("std");
-const Lexer = @import("Lexer.zig");
+const Lexer = @import("../Lexer.zig");
 const ErrorReporter = @import("../ErrorReporter.zig");
 
 fn verifyToken(src: []const u8, expected_output: []const u8) !void {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var err_reporter = ErrorReporter.init(allocator, src, "test.zig");
+    var err_buffer = std.ArrayList(u8).init(allocator);
+
+    var err_reporter = ErrorReporter.initWithWriter(allocator, src, "test.zig", err_buffer.writer().any());
     defer err_reporter.deinit();
 
     var tokens = try Lexer.parseTokens(allocator, src, &err_reporter, .{});
@@ -59,39 +61,26 @@ test "test return 123" {
     try verifyToken(src, expected_output);
 }
 
-test "invalid identifiers" {
-    // Instead of trying to verify tokens, we'll directly test the lexer functionality
-    // as these cases should produce errors
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    {
-        var err_reporter = ErrorReporter.init(allocator, "1foo", "test.zig");
-        defer err_reporter.deinit();
-
-        try testing.expectError(error.LexerFailed, Lexer.parseTokens(allocator, "1foo", &err_reporter, .{}));
-    }
-
-    {
-        var err_reporter = ErrorReporter.init(allocator, "@foo", "test.zig");
-        defer err_reporter.deinit();
-
-        try testing.expectError(error.LexerFailed, Lexer.parseTokens(allocator, "@foo", &err_reporter, .{}));
-    }
-}
-
 test "invalid tokens" {
     const testing = std.testing;
     const allocator = testing.allocator;
-    const data = [_][]const u8{
-        "\\",
-        "`",
-    };
 
-    for (data) |invalid_token| {
-        var err_reporter = ErrorReporter.init(allocator, invalid_token, "test.zig");
+    var err_buffer = std.ArrayList(u8).init(allocator);
+    defer err_buffer.deinit();
+
+    const idents = [_][]const u8{ "1foo", "@foo", "\\", "`" };
+    for (idents) |ident| {
+        var err_reporter = ErrorReporter.initWithWriter(
+            allocator,
+            ident,
+            "test.zig",
+            err_buffer.writer().any(),
+        );
         defer err_reporter.deinit();
 
-        try testing.expectError(error.LexerFailed, Lexer.parseTokens(allocator, invalid_token, &err_reporter, .{}));
+        try testing.expectError(
+            error.LexerFailed,
+            Lexer.parseTokens(allocator, ident, &err_reporter, .{}),
+        );
     }
 }

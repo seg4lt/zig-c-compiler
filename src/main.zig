@@ -12,6 +12,7 @@ fn runCompiler(allocator: Allocator) !void {
     const src = try preprocessor(allocator, args.src_path);
     defer allocator.free(src);
     // log.debug("Src: \n{s}", .{src});
+
     var err_reporter: ErrorReporter = .init(allocator, src, args.src_path);
     defer err_reporter.deinit();
 
@@ -35,7 +36,7 @@ fn getAllocator() struct { Allocator, bool } {
 const std = @import("std");
 const builtin = @import("builtin");
 const CliArgs = @import("CliArgs.zig");
-const Lexer = @import("Lexer/Lexer.zig");
+const Lexer = @import("Lexer.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
 const preprocessor = compiler_driver.preprocessor;
