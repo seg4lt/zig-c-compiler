@@ -2,6 +2,7 @@ gpa: Allocator,
 scratch_arena_state: *std.heap.ArenaAllocator,
 lexer_arena_state: ?*std.heap.ArenaAllocator,
 parser_arena_state: ?*std.heap.ArenaAllocator,
+codegen_arena_state: ?*std.heap.ArenaAllocator,
 
 error_reporter: *ErrorReporter,
 error_reporter_arena_state: *std.heap.ArenaAllocator,
@@ -18,6 +19,9 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
     const parser_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
     parser_arena_state.* = std.heap.ArenaAllocator.init(gpa);
 
+    const codegen_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
+    codegen_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+
     const error_reporter_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
     error_reporter_arena_state.* = std.heap.ArenaAllocator.init(gpa);
     const error_arena = error_reporter_arena_state.allocator();
@@ -30,6 +34,7 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
         .scratch_arena_state = arena_state,
         .lexer_arena_state = lexer_arena_state,
         .parser_arena_state = parser_arena_state,
+        .codegen_arena_state = codegen_arena_state,
         .error_reporter = error_reporter,
         .error_reporter_arena_state = error_reporter_arena_state,
     };
@@ -41,6 +46,7 @@ pub fn deinit(self: *Self) void {
 
     self.deinitLexerArena();
     self.deinitParserArena();
+    self.deinitCodegenArena();
 
     self.error_reporter_arena_state.deinit();
     self.gpa.destroy(self.error_reporter_arena_state);
@@ -75,6 +81,18 @@ pub fn deinitParserArena(self: *Self) void {
         _ = arena.deinit();
         self.gpa.destroy(arena);
         self.parser_arena_state = null;
+    }
+}
+
+pub fn codegenArena(self: *const Self) Allocator {
+    return self.codegen_arena_state.?.allocator();
+}
+
+pub fn deinitCodegenArena(self: *Self) void {
+    if (self.codegen_arena_state) |arena| {
+        _ = arena.deinit();
+        self.gpa.destroy(arena);
+        self.codegen_arena_state = null;
     }
 }
 

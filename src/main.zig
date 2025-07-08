@@ -37,7 +37,17 @@ fn runCompiler(gpa: Allocator) !void {
 
     compiler_ctx.resetScratchArena();
     compiler_ctx.deinitLexerArena();
-    _ = program_ast;
+
+    const asm_gen = if (args.flag.codegen) AsmGen.asmGen(.{
+        .arena = compiler_ctx.codegenArena(),
+        .scratch_arena = compiler_ctx.scratchArena(),
+        .pg = program_ast orelse return error.BooooAstIsNull,
+        .print_codegen = true,
+    }) else null;
+    
+    compiler_ctx.resetScratchArena();
+    compiler_ctx.deinitParserArena();
+    _ = asm_gen;
 }
 
 fn getAllocator() struct { Allocator, bool } {
@@ -52,6 +62,7 @@ const builtin = @import("builtin");
 const CliArgs = @import("CliArgs.zig");
 const Lexer = @import("Lexer.zig");
 const AstParser = @import("AstParser.zig");
+const AsmGen = @import("AsmGen.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
 const CompilerContext = @import("CompilerContext.zig");

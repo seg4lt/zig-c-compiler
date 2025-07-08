@@ -41,7 +41,7 @@ pub fn parse() !Self {
             flag = .PARSE;
             continue;
         }
-        if (std.mem.eql(u8, "--code-gen", arg)) {
+        if (std.mem.eql(u8, "--code-gen", arg) or std.mem.eql(u8, "--codegen", arg)) {
             flag = .CODE_GEN;
             continue;
         }

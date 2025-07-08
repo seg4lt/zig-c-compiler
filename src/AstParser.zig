@@ -141,8 +141,8 @@ fn isAtEndOffset(p: *Self, offset: usize) bool {
     return (p.current + offset) >= p.tokens.len;
 }
 
-const Ast = struct {
-    const Program = struct {
+pub const Ast = struct {
+    pub const Program = struct {
         @"fn": *FnDecl,
 
         pub fn init(allocator: Allocator, @"fn": *FnDecl) *Program {
@@ -151,7 +151,7 @@ const Ast = struct {
             return pg;
         }
     };
-    const FnDecl = struct {
+    pub const FnDecl = struct {
         name: []const u8,
         body: *Stmt,
         loc: SourceLocation,
@@ -162,7 +162,7 @@ const Ast = struct {
             return fn_decl;
         }
     };
-    const Stmt = union(enum) {
+    pub const Stmt = union(enum) {
         Return: struct { expr: *Expr, loc: SourceLocation },
 
         pub fn returnStmt(allocator: Allocator, expr: *Expr, line: usize, start: usize) *Stmt {
@@ -171,7 +171,7 @@ const Ast = struct {
             return stmt;
         }
     };
-    const Expr = union(enum) {
+    pub const Expr = union(enum) {
         Constant: struct { value: i64, loc: SourceLocation },
 
         pub fn constantExpr(allocator: Allocator, value: i64, line: usize, start: usize) *Expr {
