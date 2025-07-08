@@ -7,5 +7,12 @@ if [ -n "$TC" ]; then
   exit 0
 fi
 
+if [ -n "$RUN" ]; then
+  echo "Running ./c/main.c"
+  docker-compose exec app bash -c "zig build && ./zig-out/bin/zcc -- ./c/main.c && ./c/main"
+  status=$?
+  exit $status
+fi
+
 echo "Compiling ./c/main.c"
 docker-compose exec app bash -c "zig build && ./zig-out/bin/zcc -- ./c/main.c $1"

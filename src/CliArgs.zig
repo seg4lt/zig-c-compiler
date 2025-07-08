@@ -8,7 +8,8 @@ const CliFlag = packed struct(u8) {
     parse: bool = true,
     codegen: bool = true,
     assemble: bool = true,
-    _padding: u4 = 0,
+    link: bool = true,
+    _padding: u3 = 0,
 
     pub const LEX = fromBits(0b1);
     pub const PARSE = fromBits(0b11);

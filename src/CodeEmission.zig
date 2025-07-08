@@ -36,10 +36,6 @@ fn emitFnDecl(s: *const Self, fn_decl: Asm.FnDefn) void {
     s.write_fmt("\t.globl\t{s}\n", .{fn_decl.name});
     s.write_fmt("{s}:\n", .{fn_decl.name});
 
-    // { // save caller stack pointer: prologue
-    //     write(s.writer, "\tpushq\t{s}\n", ce_fmt_reg(.RBP));
-    //     write(s.writer, "\tmovq\t{s}, {s}\n", ce_fmt_reg(.RSP), ce_fmt_reg(.RBP));
-    // }
     for (fn_decl.instructions.items) |item| {
         s.emitInstructions(item);
     }
@@ -51,11 +47,6 @@ fn emitInstructions(s: *const Self, instruction: Asm.Instruction) void {
             s.write_fmt("\tmovl\t{s}, {s}\n", .{ s.fmtOperand(mov.src), s.fmtOperand(mov.dst) });
         },
         .Ret => {
-            // {   // epilogue
-            //     write(writer, "\t# vv\tEpilogue\n");
-            //     write(writer, "\tmovq\t%, %\n", ce_fmt_reg(.RBP), ce_fmt_reg(.RSP));
-            //     write(writer, "\tpopq\t%\n", ce_fmt_reg(.RBP));
-            // }
             s.write("\tret\n");
         },
     }

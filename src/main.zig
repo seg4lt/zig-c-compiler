@@ -3,7 +3,7 @@ pub fn main() !void {
     defer {
         if (deinit) {
             const leak_status = debug_allocator.deinit();
-            std.log.debug("----- LEAK STATUS: {any} ----- ", .{leak_status});
+            if (builtin.mode == .Debug) std.log.debug("----- LEAK STATUS: {any} ----- ", .{leak_status});
         }
     }
 
@@ -57,7 +57,11 @@ fn runCompiler(gpa: Allocator) !void {
         });
     }
     compiler_ctx.resetScratchArena();
-    compiler_ctx.deinitCodegenArena();
+    compiler_ctx.deinitCodeEmissionArena();
+
+    if (args.flag.link) {
+        assembleAndLink(compiler_ctx.scratchArena(), args.src_path[0 .. args.src_path.len - 2], .exe);
+    }
 }
 
 fn getAllocator() struct { Allocator, bool } {
@@ -78,6 +82,7 @@ const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
 const CompilerContext = @import("CompilerContext.zig");
 const preprocessor = compiler_driver.preprocessor;
+const assembleAndLink = compiler_driver.assembleAndLink;
 const Allocator = std.mem.Allocator;
 const log = std.log;
 
