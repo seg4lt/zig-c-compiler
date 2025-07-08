@@ -2,7 +2,7 @@ error_items: std.ArrayList(ErrorItem),
 src: []const u8,
 src_path: []const u8,
 writer: AnyWriter,
-allocator: Allocator,
+arena: Allocator,
 
 const Self = @This();
 
@@ -13,23 +13,18 @@ pub const ErrorItem = struct {
     column: usize,
 };
 
-pub fn init(allocator: Allocator, src: []const u8, src_path: []const u8) Self {
-    return .initWithWriter(allocator, src, src_path, std.io.getStdErr().writer().any());
+pub fn init(arena: Allocator, src: []const u8, src_path: []const u8) Self {
+    return .initWithWriter(arena, src, src_path, std.io.getStdErr().writer().any());
 }
 
-pub fn initWithWriter(allocator: Allocator, src: []const u8, src_path: []const u8, writer: AnyWriter) Self {
+pub fn initWithWriter(arena: Allocator, src: []const u8, src_path: []const u8, writer: AnyWriter) Self {
     return .{
-        .error_items = std.ArrayList(ErrorItem).init(allocator),
+        .error_items = std.ArrayList(ErrorItem).init(arena),
         .src = src,
         .src_path = src_path,
         .writer = writer,
-        .allocator = allocator,
+        .arena = arena,
     };
-}
-
-pub fn deinit(s: *Self) void {
-    for (s.error_items.items) |it| s.allocator.free(it.msg);
-    s.error_items.deinit();
 }
 
 pub fn printError(s: *const Self) void {
@@ -38,7 +33,7 @@ pub fn printError(s: *const Self) void {
 }
 
 pub fn addError(s: *Self, line: usize, start: usize, comptime msg_fmt: []const u8, args: anytype) void {
-    const item = getErrorItem(s.allocator, s.src, s.src_path, line, start, msg_fmt, args);
+    const item = getErrorItem(s.arena, s.src, s.src_path, line, start, msg_fmt, args);
     s.error_items.append(item) catch unreachable;
 }
 
@@ -61,33 +56,28 @@ fn getErrorItem(
     }
     const column = start - cls;
     var sb = std.ArrayList(u8).init(allocator);
-    defer sb.deinit();
+    // TODO: maybe there should be scratch arena here
+    // defer sb.deinit();
 
     const error_in = std.fmt.allocPrint(
         allocator,
         "Error in {s}:{d},{d}\n",
         .{ src_path, line, column },
     ) catch unreachable;
-    defer allocator.free(error_in);
     sb.appendSlice(error_in) catch unreachable;
 
     const support_line = std.fmt.allocPrint(allocator, "{s}", .{src[pls..cls]}) catch unreachable;
-    defer allocator.free(support_line);
     sb.appendSlice(support_line) catch unreachable;
 
     const error_line = std.fmt.allocPrint(allocator, "{s}\n", .{src[cls..cle]}) catch unreachable;
-    defer allocator.free(error_line);
     sb.appendSlice(error_line) catch unreachable;
 
     const padding = allocator.alloc(u8, column) catch unreachable;
-    defer allocator.free(padding);
     @memset(padding, ' ');
 
     const detail_msg = std.fmt.allocPrint(allocator, msg_fmt, args) catch unreachable;
-    defer allocator.free(detail_msg);
 
     const final_msg = std.fmt.allocPrint(allocator, "{s}^____ {s}", .{ padding, detail_msg }) catch unreachable;
-    defer allocator.free(final_msg);
 
     sb.appendSlice(final_msg) catch unreachable;
 

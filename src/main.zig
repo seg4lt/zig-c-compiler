@@ -5,25 +5,34 @@ pub fn main() !void {
     try runCompiler(gpa);
 }
 
-fn runCompiler(allocator: Allocator) !void {
+fn runCompiler(gpa: Allocator) !void {
     const args: CliArgs = try .parse();
-    // log.debug("Args: {any}", .{args});
+    const src = try preprocessor(gpa, args.src_path);
+    defer gpa.free(src);
 
-    const src = try preprocessor(allocator, args.src_path);
-    defer allocator.free(src);
-    // log.debug("Src: \n{s}", .{src});
+    var compiler_ctx = CompilerContext.init(gpa, src, args.src_path);
+    defer compiler_ctx.deinit();
 
-    var err_reporter: ErrorReporter = .init(allocator, src, args.src_path);
-    defer err_reporter.deinit();
+    const lex_tokens = if (args.flag.lex) try Lexer.parseTokens(.{
+        .src = src,
+        .arena = compiler_ctx.lexerArena(),
+        .scratch_arena = compiler_ctx.scratchArena(),
+        .error_reporter = compiler_ctx.error_reporter,
+        .print_tokens = true,
+    }) else null;
 
-    const lex_tokens: ?std.ArrayList(Lexer.Token) = if (args.flag.lex)
-        try Lexer.parseTokens(allocator, src, &err_reporter, .{ .print_tokens = true })
-    else
-        null;
+    compiler_ctx.resetScratchArena();
+    const program_ast = if (args.flag.parse) try AstParser.parse(.{
+        .tokens = lex_tokens orelse return error.OwwwMyyyGauudddLexTokenIsNull,
+        .arena = compiler_ctx.parserArena(),
+        .scratch_arena = compiler_ctx.scratchArena(),
+        .error_reporter = compiler_ctx.error_reporter,
+        .print_ast = true,
+    }) else null;
 
-    if (lex_tokens) |tokens| {
-        defer tokens.deinit();
-    }
+    compiler_ctx.resetScratchArena();
+    compiler_ctx.deinitLexerArena();
+    _ = program_ast;
 }
 
 fn getAllocator() struct { Allocator, bool } {
@@ -37,8 +46,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const CliArgs = @import("CliArgs.zig");
 const Lexer = @import("Lexer.zig");
+const AstParser = @import("AstParser.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
+const CompilerContext = @import("CompilerContext.zig");
 const preprocessor = compiler_driver.preprocessor;
 const Allocator = std.mem.Allocator;
 const log = std.log;

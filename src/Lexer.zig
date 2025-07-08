@@ -3,37 +3,45 @@ tokens: std.ArrayList(Token),
 line: usize = 1,
 start: usize = 0,
 current: usize = 0,
+
+print_tokens: bool = false,
 error_reporter: *ErrorReporter,
+
+arena: Allocator,
+scratch_arena: Allocator,
 
 const Self = @This();
 
 const LexerOptions = struct {
+    arena: Allocator,
+    scratch_arena: Allocator,
+    src: []const u8,
+    error_reporter: *ErrorReporter,
     print_tokens: bool = false,
 };
 
-pub fn parseTokens(
-    allocator: Allocator,
-    src: []const u8,
-    error_reporter: *ErrorReporter,
-    opt: LexerOptions,
-) LexerError!std.ArrayList(Token) {
-    var lexer = Self{
-        .src = src,
-        .error_reporter = error_reporter,
-        .tokens = std.ArrayList(Token).init(allocator),
+pub fn parseTokens(opt: LexerOptions) LexerError![]const Token {
+    const tokens = std.ArrayList(Token).init(opt.arena);
+    var l = Self{
+        .src = opt.src,
+        .tokens = tokens,
+        .arena = opt.arena,
+        .scratch_arena = opt.scratch_arena,
+        .error_reporter = opt.error_reporter,
+        .print_tokens = opt.print_tokens,
     };
-    errdefer lexer.tokens.deinit();
 
-    lexer.scan();
+    l.scan();
 
-    if (lexer.error_reporter.error_items.items.len > 0) {
-        lexer.error_reporter.printError();
+    if (l.error_reporter.error_items.items.len > 0) {
+        l.error_reporter.printError();
         return LexerError.LexerFailed;
     }
 
-    if (opt.print_tokens) printTokens(lexer.tokens, std.io.getStdOut().writer().any());
-
-    return lexer.tokens;
+    if (l.print_tokens) {
+        printTokens(l.tokens, std.io.getStdOut().writer().any());
+    }
+    return l.tokens.items;
 }
 
 fn appendError(s: *Self, comptime fmt: []const u8, args: anytype) void {
@@ -81,15 +89,15 @@ fn scan(s: *Self) void {
             continue;
         }
         switch (c) {
-            '(' => s.addToken("(", .lparen),
-            ')' => s.addToken(")", .rparen),
-            '{' => s.addToken("{", .lcurly),
-            '}' => s.addToken("}", .rcurly),
-            ';' => s.addToken(";", .semicolon),
+            '(' => s.addToken("(", .LParen),
+            ')' => s.addToken(")", .RParen),
+            '{' => s.addToken("{", .LCurly),
+            '}' => s.addToken("}", .RCurly),
+            ';' => s.addToken(";", .Semicolon),
             '/' => switch (s.peek()) {
                 '/' => s.comment(),
                 '*' => s.comment(),
-                else => s.addToken("/", .divide),
+                else => s.addToken("/", .Divide),
             },
             else => {
                 s.appendError("Unknown character: {c}\n", .{c});
@@ -132,7 +140,7 @@ fn number(s: *Self) void {
         return; // Don't add a token when we find an error
     }
     const lexeme = s.src[s.start..s.current];
-    s.addToken(lexeme, .int_literal);
+    s.addToken(lexeme, .IntLiteral);
 }
 
 fn consume(s: *Self, char: u8) u8 {
@@ -172,10 +180,10 @@ fn addToken(s: *Self, lexeme: []const u8, token_type: TokenType) void {
 }
 
 fn getTokenType(lexeme: []const u8) TokenType {
-    if (std.mem.eql(u8, "int", lexeme)) return .int;
-    if (std.mem.eql(u8, "void", lexeme)) return .void;
-    if (std.mem.eql(u8, "return", lexeme)) return .@"return";
-    return .ident;
+    if (std.mem.eql(u8, "int", lexeme)) return .Int;
+    if (std.mem.eql(u8, "void", lexeme)) return .Void;
+    if (std.mem.eql(u8, "return", lexeme)) return .Return;
+    return .Ident;
 }
 
 fn peekOffset(s: *const Self, offset: usize) u8 {
@@ -203,21 +211,21 @@ pub const Token = struct {
 
 pub const TokenType = enum {
     // single-character tokens
-    lparen,
-    rparen,
-    lcurly,
-    rcurly,
-    semicolon,
-    divide,
+    LParen,
+    RParen,
+    LCurly,
+    RCurly,
+    Semicolon,
+    Divide,
 
     //
-    ident,
-    int_literal,
+    Ident,
+    IntLiteral,
 
     // keyword
-    int,
-    @"return",
-    void,
+    Int,
+    Return,
+    Void,
 };
 
 const std = @import("std");
