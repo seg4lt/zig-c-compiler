@@ -28,6 +28,18 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
         return e;
     };
 
+    if (self.current < self.tokens.len) {
+        const last_token = self.peek() orelse unreachable;
+        self.parseError(
+            ParseError.UnexpectedToken,
+            "Unexpected token {s} at end of input",
+            .{last_token.lexeme},
+        ) catch |e| {
+            self.error_reporter.printError();
+            return e;
+        };
+    }
+
     if (opt.print_ast) AstPrinter.print(std.io.getStdOut().writer().any(), pg);
 
     return pg;
