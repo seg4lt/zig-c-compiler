@@ -178,6 +178,7 @@ const AstPrinter = struct {
         write(writer, "-- AST --\n");
         write(writer, "program\n");
         printFnDecl(writer, pg.@"fn", 1);
+        write(writer, "\n");
     }
     fn printFnDecl(writer: AnyWriter, fn_decl: *const Ast.FnDecl, depth: usize) void {
         printSpace(writer, depth);

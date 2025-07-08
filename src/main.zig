@@ -1,6 +1,11 @@
 pub fn main() !void {
     const gpa, const deinit = getAllocator();
-    defer _ = if (deinit) debug_allocator.deinit();
+    defer {
+        if (deinit) {
+            const leak_status = debug_allocator.deinit();
+            std.log.debug("----- LEAK STATUS: {any} ----- ", .{leak_status});
+        }
+    }
 
     try runCompiler(gpa);
 }

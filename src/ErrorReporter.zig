@@ -30,6 +30,7 @@ pub fn initWithWriter(arena: Allocator, src: []const u8, src_path: []const u8, w
 pub fn printError(s: *const Self) void {
     if (s.error_items.items.len == 0) return;
     for (s.error_items.items) |it| s.writer.print("{s}", .{it.msg}) catch unreachable;
+    _ = s.writer.write("\n") catch unreachable;
 }
 
 pub fn addError(s: *Self, line: usize, start: usize, comptime msg_fmt: []const u8, args: anytype) void {
@@ -56,8 +57,6 @@ fn getErrorItem(
     }
     const column = start - cls;
     var sb = std.ArrayList(u8).init(allocator);
-    // TODO: maybe there should be scratch arena here
-    // defer sb.deinit();
 
     const error_in = std.fmt.allocPrint(
         allocator,
@@ -98,7 +97,10 @@ fn findLineStart(src: []const u8, start: usize) struct { usize, usize } {
             count += 1;
             prev_line_start = cur + 1;
         }
-        if (cur == 0) break;
+        if (cur == 0) {
+            prev_line_start = 0;
+            break;
+        }
         cur -= 1;
     }
     return .{ prev_line_start, cur_line_start };

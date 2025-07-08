@@ -1,5 +1,5 @@
 /* A single backslash is not a valid token. */
 // 
-int main(void) {
+int main(void) 
     return 1;
 }
