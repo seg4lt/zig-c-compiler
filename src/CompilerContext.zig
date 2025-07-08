@@ -3,6 +3,7 @@ scratch_arena_state: *std.heap.ArenaAllocator,
 lexer_arena_state: ?*std.heap.ArenaAllocator,
 parser_arena_state: ?*std.heap.ArenaAllocator,
 codegen_arena_state: ?*std.heap.ArenaAllocator,
+code_emission_arena_state: ?*std.heap.ArenaAllocator,
 
 error_reporter: *ErrorReporter,
 error_reporter_arena_state: *std.heap.ArenaAllocator,
@@ -22,6 +23,9 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
     const codegen_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
     codegen_arena_state.* = std.heap.ArenaAllocator.init(gpa);
 
+    const code_emission_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
+    code_emission_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+
     const error_reporter_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
     error_reporter_arena_state.* = std.heap.ArenaAllocator.init(gpa);
     const error_arena = error_reporter_arena_state.allocator();
@@ -35,6 +39,7 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
         .lexer_arena_state = lexer_arena_state,
         .parser_arena_state = parser_arena_state,
         .codegen_arena_state = codegen_arena_state,
+        .code_emission_arena_state = code_emission_arena_state,
         .error_reporter = error_reporter,
         .error_reporter_arena_state = error_reporter_arena_state,
     };
@@ -47,6 +52,7 @@ pub fn deinit(self: *Self) void {
     self.deinitLexerArena();
     self.deinitParserArena();
     self.deinitCodegenArena();
+    self.deinitCodeEmissionArena();
 
     self.error_reporter_arena_state.deinit();
     self.gpa.destroy(self.error_reporter_arena_state);
@@ -93,6 +99,18 @@ pub fn deinitCodegenArena(self: *Self) void {
         _ = arena.deinit();
         self.gpa.destroy(arena);
         self.codegen_arena_state = null;
+    }
+}
+
+pub fn codeEmissionArena(self: *const Self) Allocator {
+    return self.code_emission_arena_state.?.allocator();
+}
+
+pub fn deinitCodeEmissionArena(self: *Self) void {
+    if (self.code_emission_arena_state) |arena| {
+        _ = arena.deinit();
+        self.gpa.destroy(arena);
+        self.code_emission_arena_state = null;
     }
 }
 

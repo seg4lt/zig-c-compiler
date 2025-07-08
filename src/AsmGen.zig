@@ -1,5 +1,6 @@
 arena: Allocator,
 scratch_arena: Allocator,
+
 const Self = @This();
 
 const Options = struct {
@@ -38,7 +39,7 @@ fn genStmt(self: *const Self, stmt: *const Ast.Stmt, insts: *Asm.Instructions) v
     switch (stmt.*) {
         .Return => |ret_stmt| {
             const expr = ret_stmt.expr;
-            const inst: Asm.Instruction = .mov(.imm(expr.Constant.value), .Register);
+            const inst: Asm.Instruction = .mov(.imm(expr.Constant.value), .register(.rax));
             insts.append(inst) catch unreachable;
             insts.append(.Ret) catch unreachable;
         },
@@ -64,59 +65,77 @@ pub const Asm = struct {
     };
     pub const Operand = union(enum) {
         Imm: i64,
-        Register,
+        Register: Register,
 
         pub fn imm(value: i64) Operand {
             return .{ .Imm = value };
         }
+        pub fn register(reg: Register) Operand {
+            return .{ .Register = reg };
+        }
+    };
+    pub const Register = enum {
+        rax,
+        rdx,
     };
 };
 
 const Printer = struct {
+    writer: AnyWriter,
+
     pub fn print(writer: AnyWriter, pg: *const Asm.Program) void {
-        write(writer, "-- CodeGen --\n");
-        printFnDecl(writer, &pg.fn_defn, 0);
-        write(writer, "\n");
+        const s = Printer{ .writer = writer };
+        s.write("-- CodeGen --\n");
+        s.printFnDecl(&pg.fn_defn, 0);
+        s.write("\n");
     }
-    fn printFnDecl(writer: AnyWriter, fn_defn: *const Asm.FnDefn, depth: usize) void {
-        printSpace(writer, depth);
-        write_fmt(writer, "{s}:\n", .{fn_defn.name});
+    fn printFnDecl(s: *const @This(), fn_defn: *const Asm.FnDefn, depth: usize) void {
+        s.printSpace(depth);
+        s.write_fmt("{s}:\n", .{fn_defn.name});
         for (fn_defn.instructions.items) |*inst| {
-            printInst(writer, inst, depth + 1);
+            s.printInst(inst, depth + 1);
         }
     }
-    fn printInst(writer: AnyWriter, inst: *const Asm.Instruction, depth: usize) void {
-        printSpace(writer, depth);
+    fn printInst(s: *const @This(), inst: *const Asm.Instruction, depth: usize) void {
+        s.printSpace(depth);
         switch (inst.*) {
             .Mov => |mov_inst| {
-                write(writer, "mov ");
-                printOperand(writer, &mov_inst.src);
-                write(writer, ", ");
-                printOperand(writer, &mov_inst.dst);
+                s.write("mov ");
+                s.printOperand(&mov_inst.src);
+                s.write(", ");
+                s.printOperand(&mov_inst.dst);
             },
             .Ret => {
-                write(writer, "ret");
+                s.write("ret");
             },
         }
-        write(writer, "\n");
+        s.write("\n");
     }
 
-    fn printOperand(writer: AnyWriter, op: *const Asm.Operand) void {
+    fn printOperand(s: *const @This(), op: *const Asm.Operand) void {
         switch (op.*) {
-            .Imm => |imm| write_fmt(writer, "Imm({d})", .{imm}),
-            .Register => write(writer, "Register()"),
+            .Imm => |imm| s.write_fmt("Imm({d})", .{imm}),
+            .Register => |r| s.printRegister(r),
         }
     }
 
-    fn printSpace(writer: AnyWriter, depth: usize) void {
-        for (0..depth) |_| write(writer, "  ");
+    fn printRegister(s: *const @This(), reg: Asm.Register) void {
+        const reg_str = switch (reg) {
+            .rax => "rax",
+            .rdx => "rdx",
+        };
+        s.write_fmt("Register({s})", .{reg_str});
     }
 
-    fn write(w: AnyWriter, comptime bytes: []const u8) void {
-        _ = w.write(bytes) catch unreachable;
+    fn printSpace(s: *const @This(), depth: usize) void {
+        for (0..depth) |_| s.write("  ");
     }
-    fn write_fmt(w: AnyWriter, comptime fmt: []const u8, args: anytype) void {
-        _ = w.print(fmt, args) catch unreachable;
+
+    fn write(s: *const @This(), bytes: []const u8) void {
+        _ = s.writer.write(bytes) catch unreachable;
+    }
+    fn write_fmt(s: *const @This(), comptime fmt: []const u8, args: anytype) void {
+        _ = s.writer.print(fmt, args) catch unreachable;
     }
 };
 
