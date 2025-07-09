@@ -2,6 +2,7 @@ gpa: Allocator,
 scratch_arena_state: *std.heap.ArenaAllocator,
 lexer_arena_state: ?*std.heap.ArenaAllocator,
 parser_arena_state: ?*std.heap.ArenaAllocator,
+tacky_arena_state: ?*std.heap.ArenaAllocator,
 codegen_arena_state: ?*std.heap.ArenaAllocator,
 code_emission_arena_state: ?*std.heap.ArenaAllocator,
 
@@ -19,6 +20,9 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
 
     const parser_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
     parser_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+
+    const tacky_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
+    tacky_arena_state.* = std.heap.ArenaAllocator.init(gpa);
 
     const codegen_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
     codegen_arena_state.* = std.heap.ArenaAllocator.init(gpa);
@@ -38,6 +42,7 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
         .scratch_arena_state = arena_state,
         .lexer_arena_state = lexer_arena_state,
         .parser_arena_state = parser_arena_state,
+        .tacky_arena_state = tacky_arena_state,
         .codegen_arena_state = codegen_arena_state,
         .code_emission_arena_state = code_emission_arena_state,
         .error_reporter = error_reporter,
@@ -51,6 +56,7 @@ pub fn deinit(self: *Self) void {
 
     self.deinitLexerArena();
     self.deinitParserArena();
+    self.deinitTackyArena();
     self.deinitCodegenArena();
     self.deinitCodeEmissionArena();
 
@@ -87,6 +93,18 @@ pub fn deinitParserArena(self: *Self) void {
         _ = arena.deinit();
         self.gpa.destroy(arena);
         self.parser_arena_state = null;
+    }
+}
+
+pub fn tackyArena(self: *const Self) Allocator {
+    return self.tacky_arena_state.?.allocator();
+}
+
+pub fn deinitTackyArena(self: *Self) void {
+    if (self.tacky_arena_state) |arena| {
+        _ = arena.deinit();
+        self.gpa.destroy(arena);
+        self.tacky_arena_state = null;
     }
 }
 

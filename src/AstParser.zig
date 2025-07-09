@@ -334,6 +334,7 @@ const AstPrinter = struct {
     fn write(w: AnyWriter, bytes: []const u8) void {
         _ = w.write(bytes) catch unreachable;
     }
+
     fn write_fmt(w: AnyWriter, comptime fmt: []const u8, args: anytype) void {
         _ = w.print(fmt, args) catch unreachable;
     }

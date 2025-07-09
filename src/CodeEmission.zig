@@ -70,9 +70,11 @@ fn fmtRegister(s: *const Self, reg: Asm.Register) []const u8 {
 fn write(s: *const Self, comptime bytes: []const u8) void {
     _ = s.writer.write(bytes) catch unreachable;
 }
+
 fn write_fmt(s: *const Self, comptime fmt: []const u8, args: anytype) void {
     _ = s.writer.print(fmt, args) catch unreachable;
 }
+
 const std = @import("std");
 const builtin = @import("builtin");
 const Asm = @import("AsmGen.zig").Asm;
