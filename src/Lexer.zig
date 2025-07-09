@@ -34,7 +34,7 @@ pub fn parseTokens(opt: LexerOptions) LexerError![]const Token {
     l.scan();
 
     if (l.error_reporter.error_items.items.len > 0) {
-        l.error_reporter.printError();
+        l.error_reporter.printError(std.io.getStdErr().writer().any());
         return LexerError.LexerFailed;
     }
 
@@ -94,6 +94,15 @@ fn scan(s: *Self) void {
             '{' => s.addToken("{", .LCurly),
             '}' => s.addToken("}", .RCurly),
             ';' => s.addToken(";", .Semicolon),
+            '~' => s.addToken("~", .Tilde),
+            '-' => {
+                if (s.peek() == '-') {
+                    _ = s.consumeAny();
+                    s.addToken("--", .MinusMinus);
+                    continue;
+                }
+                s.addToken("-", .Minus);
+            },
             '/' => switch (s.peek()) {
                 '/' => s.comment(),
                 '*' => s.comment(),
@@ -217,6 +226,9 @@ pub const TokenType = enum {
     RCurly,
     Semicolon,
     Divide,
+    Tilde,
+    Minus,
+    MinusMinus,
 
     //
     Ident,

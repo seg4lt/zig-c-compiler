@@ -1,7 +1,6 @@
 error_items: std.ArrayList(ErrorItem),
 src: []const u8,
 src_path: []const u8,
-writer: AnyWriter,
 arena: Allocator,
 
 const Self = @This();
@@ -14,23 +13,18 @@ pub const ErrorItem = struct {
 };
 
 pub fn init(arena: Allocator, src: []const u8, src_path: []const u8) Self {
-    return .initWithWriter(arena, src, src_path, std.io.getStdErr().writer().any());
-}
-
-pub fn initWithWriter(arena: Allocator, src: []const u8, src_path: []const u8, writer: AnyWriter) Self {
     return .{
         .error_items = std.ArrayList(ErrorItem).init(arena),
         .src = src,
         .src_path = src_path,
-        .writer = writer,
         .arena = arena,
     };
 }
 
-pub fn printError(s: *const Self) void {
+pub fn printError(s: *const Self, writer: AnyWriter) void {
     if (s.error_items.items.len == 0) return;
-    for (s.error_items.items) |it| s.writer.print("{s}", .{it.msg}) catch unreachable;
-    _ = s.writer.write("\n") catch unreachable;
+    for (s.error_items.items) |it| writer.print("{s}", .{it.msg}) catch unreachable;
+    _ = writer.write("\n") catch unreachable;
 }
 
 pub fn addError(s: *Self, line: usize, start: usize, comptime msg_fmt: []const u8, args: anytype) void {
