@@ -77,6 +77,6 @@ fn write_fmt(s: *const Self, comptime fmt: []const u8, args: anytype) void {
 
 const std = @import("std");
 const builtin = @import("builtin");
-const Asm = @import("AsmGen.zig").Asm;
+const Asm = @import("Codegen.zig").Asm;
 const AnyWriter = std.io.AnyWriter;
 const Allocator = std.mem.Allocator;

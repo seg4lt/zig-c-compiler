@@ -43,18 +43,19 @@ fn runCompiler(gpa: Allocator) !void {
         .pg = program_ast orelse return error.OwwwMyyyGauudddAstIsNull,
         .print = true,
     }) else null;
-    _ = tacky_pg;
-    
     compiler_ctx.resetScratchArena();
     compiler_ctx.deinitParserArena();
 
-    // const asm_gen = if (args.flag.codegen) AsmGen.asmGen(.{
-    //     .arena = compiler_ctx.codegenArena(),
-    //     .scratch_arena = compiler_ctx.scratchArena(),
-    //     .pg = program_ast orelse return error.BooooAstIsNull,
-    //     .print_codegen = true,
-    // }) else null;
+    const codegen_pg = if (args.flag.codegen) Codegen.emit(.{
+        .arena = compiler_ctx.codegenArena(),
+        .scratch_arena = compiler_ctx.scratchArena(),
+        .pg = tacky_pg orelse return error.BooooYourEyeRrrrIsNull,
+        .print_codegen = true,
+    }) else null;
+    compiler_ctx.resetScratchArena();
+    compiler_ctx.deinitCodegenArena();
 
+    _ = codegen_pg;
 
     // if (args.flag.assemble) {
     //     try CodeEmission.emit(.{
@@ -85,7 +86,7 @@ const CliArgs = @import("CliArgs.zig");
 const Lexer = @import("Lexer.zig");
 const AstParser = @import("AstParser.zig");
 const TackyIR = @import("TackyIR.zig");
-const AsmGen = @import("AsmGen.zig");
+const Codegen = @import("Codegen.zig");
 const CodeEmission = @import("CodeEmission.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");

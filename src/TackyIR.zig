@@ -12,7 +12,7 @@ const Options = struct {
 pub fn genTacky(opt: Options) Tac.Program {
     var self = Self{ .arena = opt.arena };
     const pg = self.genPg(opt.pg);
-    if (opt.print) TackyIrPrinter.print(std.io.getStdErr().writer().any(), pg);
+    if (opt.print) TackyIRPrinter.print(std.io.getStdErr().writer().any(), pg);
     return pg;
 }
 
@@ -27,7 +27,7 @@ fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.FnDefn {
 
     s.genStmt(fn_decl.body, &instructions);
 
-    instructions.append(.returnInst(.constVal(0))) catch unreachable;
+    instructions.append(.ret(.constant(0))) catch unreachable;
     return .{
         .name = fn_decl.name,
         .body = instructions,
@@ -37,13 +37,13 @@ pub fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Ins
     switch (stmt.*) {
         .Return => |ret| {
             const ret_val = s.genExpr(ret.expr, instructions);
-            instructions.append(.returnInst(ret_val)) catch unreachable;
+            instructions.append(.ret(ret_val)) catch unreachable;
         },
     }
 }
 pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
-        .Constant => |constant| .constVal(constant.value),
+        .Constant => |constant| .constant(constant.value),
         .Unary => |unary| {
             const src = s.genExpr(unary.expr, instructions);
             const dst = s.makeVar();
@@ -51,7 +51,7 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
                 .Negate => .Negate,
                 .Complement => .Complement,
             };
-            instructions.append(.unaryInst(operator, src, dst)) catch unreachable;
+            instructions.append(.unary(operator, src, dst)) catch unreachable;
             return dst;
         },
     };
@@ -59,7 +59,7 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
 pub fn makeVar(s: *Self) Tac.Val {
     const var_name = std.fmt.allocPrint(s.arena, "tmp.{d}", .{s.var_count}) catch unreachable;
     s.var_count += 1;
-    return .varVal(var_name);
+    return .variable(var_name);
 }
 
 pub const Tac = struct {
@@ -77,10 +77,10 @@ pub const Tac = struct {
             src: Val,
             dst: Val,
         },
-        pub fn returnInst(val: Val) Instruction {
+        pub fn ret(val: Val) Instruction {
             return .{ .Return = val };
         }
-        pub fn unaryInst(operator: UnaryOperator, src: Val, dst: Val) Instruction {
+        pub fn unary(operator: UnaryOperator, src: Val, dst: Val) Instruction {
             return .{
                 .Unary = .{
                     .operator = operator,
@@ -91,14 +91,14 @@ pub const Tac = struct {
         }
     };
     pub const Val = union(enum) {
-        Const: i64,
-        Var: []const u8,
+        Const : i64,
+        Var : []const u8,
 
-        pub fn constVal(value: i64) Val {
+        pub fn constant(value: i64) Val {
             return .{ .Const = value };
         }
 
-        pub fn varVal(ident: []const u8) Val {
+        pub fn variable(ident: []const u8) Val {
             return .{ .Var = ident };
         }
     };
@@ -108,7 +108,7 @@ pub const Tac = struct {
     };
 };
 
-const TackyIrPrinter = struct {
+const TackyIRPrinter = struct {
     writer: AnyWriter,
 
     pub fn print(writer: AnyWriter, pg: Tac.Program) void {
