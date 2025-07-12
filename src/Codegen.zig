@@ -6,68 +6,28 @@ const Options = struct {
 };
 
 pub fn emit(opt: Options) Asm.Program {
+    const stdErrorWriter = std.io.getStdOut().writer().any();
+
     var pg = Stage1.init(opt.arena).emitPg(opt.pg);
-    if (opt.print_codegen) Printer.print(std.io.getStdOut().writer().any(), pg, "Stage 1");
+    if (opt.print_codegen) Printer.print(stdErrorWriter, pg, "Stage 1");
 
-    Stage2.init(opt.arena).processPg(&pg);
-    if (opt.print_codegen) Printer.print(std.io.getStdOut().writer().any(), pg, "Stage 2");
+    const stack_size = Stage2.init(opt.arena).processPg(&pg);
+    if (opt.print_codegen) Printer.print(stdErrorWriter, pg, "Stage 2");
 
-    return pg;
+    const final_pg = Stage3.init(opt.arena).fixPg(pg, stack_size);
+    if (opt.print_codegen) Printer.print(stdErrorWriter, final_pg, "Stage 3");
+
+    return final_pg;
 }
-const Stage2 = struct {
-    arena: Allocator,
-    variable_map: *HashMap(i64),
 
-    pub fn init(arena: Allocator) Stage2 {
-        const map = arena.create(HashMap(i64)) catch unreachable;
-        map.* = HashMap(i64).init(arena);
-        return .{ .arena = arena, .variable_map = map };
-    }
-
-    pub fn processPg(s: @This(), pg: *Asm.Program) void {
-        s.processFn(&pg.fn_defn);
-    }
-    fn processFn(s: @This(), fn_defn: *Asm.FnDefn) void {
-        for (fn_defn.instructions.items) |*inst| {
-            s.processInst(inst);
-        }
-    }
-    fn processInst(s: @This(), inst: *Asm.Instruction) void {
-        switch (inst.*) {
-            .Mov => |*mov| {
-                mov.src = s.mapOperandToStack(mov.src);
-                mov.dst = s.mapOperandToStack(mov.dst);
-            },
-            .Unary => |*unary| {
-                unary.operand = s.mapOperandToStack(unary.operand);
-            },
-            .AllocateStack, .Ret => {},
-        }
-    }
-    fn mapOperandToStack(s: @This(), operand: Asm.Operand) Asm.Operand {
-        return switch (operand) {
-            .Pseudo => |ident| {
-                if (s.variable_map.getEntry(ident)) |saved_offset| {
-                    return .stack(saved_offset.value_ptr.*);
-                }
-                const new_offset: i64 = @as(i64, @intCast(s.variable_map.count() + 1)) * -4;
-                s.variable_map.put(ident, new_offset) catch unreachable;
-                return .stack(new_offset);
-            },
-            else => return operand,
-        };
-    }
-};
-
+/// Convert Tacky IR to Asm IR.
 const Stage1 = struct {
     arena: Allocator,
 
     const Self = @This();
 
     fn init(arena: Allocator) Self {
-        return .{
-            .arena = arena,
-        };
+        return .{ .arena = arena };
     }
 
     fn emitPg(s: Self, pg: Tac.Program) Asm.Program {
@@ -111,6 +71,88 @@ const Stage1 = struct {
             .Const => |constant| .imm(constant),
             .Var => |ident| .pseudo(ident),
         };
+    }
+};
+
+/// Replace pseudo variables with stack offsets.
+const Stage2 = struct {
+    arena: Allocator,
+    variable_map: *HashMap(i64),
+
+    const STACK_STEP = 4;
+
+    pub fn init(arena: Allocator) Stage2 {
+        const map = arena.create(HashMap(i64)) catch unreachable;
+        map.* = HashMap(i64).init(arena);
+        return .{ .arena = arena, .variable_map = map };
+    }
+
+    pub fn processPg(s: @This(), pg: *Asm.Program) i64 {
+        s.processFn(&pg.fn_defn);
+        return s.variable_map.count() * STACK_STEP;
+    }
+    fn processFn(s: @This(), fn_defn: *Asm.FnDefn) void {
+        for (fn_defn.instructions.items) |*inst| {
+            s.processInst(inst);
+        }
+    }
+    fn processInst(s: @This(), inst: *Asm.Instruction) void {
+        switch (inst.*) {
+            .Mov => |*mov| {
+                mov.src = s.mapOperandToStack(mov.src);
+                mov.dst = s.mapOperandToStack(mov.dst);
+            },
+            .Unary => |*unary| {
+                unary.operand = s.mapOperandToStack(unary.operand);
+            },
+            .AllocateStack, .Ret => {},
+        }
+    }
+    fn mapOperandToStack(s: @This(), operand: Asm.Operand) Asm.Operand {
+        return switch (operand) {
+            .Pseudo => |ident| {
+                if (s.variable_map.getEntry(ident)) |saved_offset| {
+                    return .stack(saved_offset.value_ptr.*);
+                }
+                const new_offset: i64 = @as(i64, @intCast(s.variable_map.count() + 1)) * -STACK_STEP;
+                s.variable_map.put(ident, new_offset) catch unreachable;
+                return .stack(new_offset);
+            },
+            else => return operand,
+        };
+    }
+};
+
+/// Fix assembly instructions
+const Stage3 = struct {
+    arena: Allocator,
+
+    pub fn init(arena: Allocator) @This() {
+        return .{ .arena = arena };
+    }
+
+    pub fn fixPg(s: @This(), pg: Asm.Program, stack_size: i64) Asm.Program {
+        _ = stack_size;
+        const fn_defn = s.fixFn(pg.fn_defn);
+        return .{ .fn_defn = fn_defn };
+    }
+
+    fn fixFn(s: @This(), fn_defn: Asm.FnDefn) Asm.FnDefn {
+        var updated_instructions = ArrayList(Asm.Instruction).init(s.arena);
+        for (fn_defn.instructions.items) |inst| {
+            switch (inst) {
+                .Mov => |mov| {
+                    if (mov.src == .Stack and mov.dst == .Stack) {
+                        updated_instructions.append(.mov(mov.src, .register(.r10))) catch unreachable;
+                        updated_instructions.append(.mov(.register(.r10), mov.dst)) catch unreachable;
+                        continue;
+                    }
+                    updated_instructions.append(inst) catch unreachable;
+                },
+                .Unary, .AllocateStack, .Ret => updated_instructions.append(inst) catch unreachable,
+            }
+        }
+        return .{ .name = fn_defn.name, .instructions = updated_instructions };
     }
 };
 
@@ -166,6 +208,7 @@ pub const Asm = struct {
         pub fn imm(value: i64) Operand {
             return .{ .Imm = value };
         }
+
         pub fn register(reg: Register) Operand {
             return .{ .Register = reg };
         }
@@ -244,7 +287,7 @@ const Printer = struct {
             .rdx => "rdx",
             .r10 => "r10",
         };
-        s.writeFmt("register({s})", .{reg_str});
+        s.writeFmt("Register({s})", .{reg_str});
     }
 
     fn printSpace(s: @This(), depth: usize) void {
