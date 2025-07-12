@@ -9,6 +9,7 @@ const Options = struct {
     scratch_arena: Allocator,
     src_path_no_ext: []const u8,
     pg: Asm.Program,
+    print: bool = false,
 };
 
 pub fn emit(opt: Options) !void {
@@ -20,11 +21,17 @@ pub fn emit(opt: Options) !void {
     };
     s.emitProgram(opt.pg);
 
+    if (opt.print) {
+        const stdout = std.io.getStdOut();
+        _ = stdout.write("-- ASM --\n") catch unreachable;
+        _ = stdout.write(buffer.items) catch unreachable;
+    }
+
     const asm_file = std.fmt.allocPrint(opt.scratch_arena, "{s}.s", .{opt.src_path_no_ext}) catch unreachable;
     try std.fs.cwd().writeFile(.{ .sub_path = asm_file, .data = buffer.items });
 }
 
-fn emitProgram(s: *const Self, pg: Asm.Program) void {
+fn emitProgram(s: Self, pg: Asm.Program) void {
     defer if (builtin.os.tag == .linux and builtin.os.tag != .macos) {
         const progbits = "\t.section .note.GNU-stack,\"\",@progbits\n";
         s.write(progbits);
@@ -32,46 +39,87 @@ fn emitProgram(s: *const Self, pg: Asm.Program) void {
     s.emitFnDecl(pg.fn_defn);
 }
 
-fn emitFnDecl(s: *const Self, fn_decl: Asm.FnDefn) void {
-    s.write_fmt("\t.globl\t{s}\n", .{fn_decl.name});
-    s.write_fmt("{s}:\n", .{fn_decl.name});
+fn emitFnDecl(s: Self, fn_decl: Asm.FnDefn) void {
+    s.writeFmt("\t.globl\t{s}\n", .{fn_decl.name});
+    s.writeFmt("{s}:\n", .{fn_decl.name});
 
-    for (fn_decl.instructions.items) |item| {
-        s.emitInstructions(item);
-    }
+    // prologue
+    s.writeFmt("\tpushq\t{s}\n", .{s.fmtRegister(.rbp)});
+    s.writeFmt("\tmovq\t{s}, {s}\n", .{ s.fmtRegister(.rsp), s.fmtRegister(.rbp) });
+
+    for (fn_decl.instructions.items) |item| s.emitInstructions(item);
 }
 
-fn emitInstructions(s: *const Self, instruction: Asm.Instruction) void {
+fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
     switch (instruction) {
         .Mov => |mov| {
-            s.write_fmt("\tmovl\t{s}, {s}\n", .{ s.fmtOperand(mov.src), s.fmtOperand(mov.dst) });
+            s.writeFmt("\tmovl\t{s}, {s}\n", .{
+                s.fmtOperand(mov.src),
+                s.fmtOperand(mov.dst),
+            });
+        },
+        .Unary => |unary| {
+            s.writeFmt("\t{s}\t{s}\n", .{
+                fmtUnaryOperator(unary.operator),
+                s.fmtOperand(unary.operand),
+            });
+        },
+        .AllocateStack => |stack_size| {
+            if (stack_size != 0) {
+                s.writeFmt("\tsubq\t${d}, {s}\n", .{
+                    stack_size,
+                    s.fmtRegister(.rsp),
+                });
+                s.write("\t# ^^^\tPrologue\n");
+            } else {
+                s.write("\t# ^^^\tPrologue (no stack allocation needed)\n");
+            }
         },
         .Ret => {
+            // epilogue
+            s.write("\t# vv\tEpilogue\n");
+            s.writeFmt("\tmovq\t{s}, {s}\n", .{ s.fmtRegister(.rbp), s.fmtRegister(.rsp) });
+            s.writeFmt("\tpopq\t{s}\n", .{s.fmtRegister(.rbp)});
             s.write("\tret\n");
         },
     }
 }
 
-fn fmtOperand(s: *const Self, op: Asm.Operand) []const u8 {
+fn fmtUnaryOperator(operator: Asm.UnaryOperator) []const u8 {
+    return switch (operator) {
+        .neg => "negl",
+        .not => "notl",
+    };
+}
+
+fn fmtOperand(s: Self, op: Asm.Operand) []const u8 {
     return switch (op) {
         .Imm => |imm| std.fmt.allocPrint(s.arena, "${d}", .{imm}) catch unreachable,
         .Register => |r| s.fmtRegister(r),
+        .Stack => |stack_size| std.fmt.allocPrint(s.arena, "{d}({s})", .{
+            stack_size,
+            s.fmtRegister(.rbp),
+        }) catch unreachable,
+        .Pseudo => unreachable, // all variable should be converted to relative stack value
     };
 }
 
-fn fmtRegister(s: *const Self, reg: Asm.Register) []const u8 {
+fn fmtRegister(s: Self, reg: Asm.Register) []const u8 {
     _ = s;
     return switch (reg) {
-        .rax => "%eax", // "%rax",
+        .rax => "%eax",
         .rdx => "%rdx",
+        .rsp => "%rsp",
+        .rbp => "%rbp",
+        .r10 => "%r10d",
     };
 }
 
-fn write(s: *const Self, comptime bytes: []const u8) void {
+fn write(s: Self, comptime bytes: []const u8) void {
     _ = s.writer.write(bytes) catch unreachable;
 }
 
-fn write_fmt(s: *const Self, comptime fmt: []const u8, args: anytype) void {
+fn writeFmt(s: Self, comptime fmt: []const u8, args: anytype) void {
     _ = s.writer.print(fmt, args) catch unreachable;
 }
 

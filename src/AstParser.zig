@@ -149,7 +149,12 @@ fn parseUnaryOperator(p: *Self, token_type: TokenType) ParseError!Ast.UnaryOpera
 }
 
 fn parseError(p: *Self, e: ParseError, comptime fmt: []const u8, args: anytype) ParseError!noreturn {
-    const token = p.peek().?;
+    const token = p.peek() orelse {
+        // If we reach here, it means we are at the end of input.
+        // We can report the error without a token.
+        p.error_reporter.addError(0, 0, fmt, args);
+        return e;
+    };
     p.error_reporter.addError(token.line, token.start, fmt, args);
     return e;
 }
@@ -291,7 +296,7 @@ const AstPrinter = struct {
     fn printFnDecl(writer: AnyWriter, fn_decl: *const Ast.FnDecl, depth: usize) void {
         printSpace(writer, depth);
 
-        write_fmt(writer, "int {s}(void) {{\n", .{fn_decl.name});
+        writeFmt(writer, "int {s}(void) {{\n", .{fn_decl.name});
         printStmt(writer, fn_decl.body, depth + 1);
 
         printSpace(writer, depth);
@@ -311,11 +316,11 @@ const AstPrinter = struct {
     fn printExpr(writer: AnyWriter, expr: *const Ast.Expr) void {
         switch (expr.*) {
             .Constant => |constant_expr| {
-                write_fmt(writer, "{d}", .{constant_expr.value});
+                writeFmt(writer, "{d}", .{constant_expr.value});
             },
             .Unary => |unary_expr| {
                 write(writer, "(");
-                write_fmt(writer, "{s}", .{
+                writeFmt(writer, "{s}", .{
                     switch (unary_expr.operator) {
                         .Negate => "-",
                         .Complement => "~",
@@ -335,7 +340,7 @@ const AstPrinter = struct {
         _ = w.write(bytes) catch unreachable;
     }
 
-    fn write_fmt(w: AnyWriter, comptime fmt: []const u8, args: anytype) void {
+    fn writeFmt(w: AnyWriter, comptime fmt: []const u8, args: anytype) void {
         _ = w.print(fmt, args) catch unreachable;
     }
 };

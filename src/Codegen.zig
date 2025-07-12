@@ -132,13 +132,13 @@ const Stage3 = struct {
     }
 
     pub fn fixPg(s: @This(), pg: Asm.Program, stack_size: i64) Asm.Program {
-        _ = stack_size;
-        const fn_defn = s.fixFn(pg.fn_defn);
+        const fn_defn = s.fixFn(pg.fn_defn, stack_size);
         return .{ .fn_defn = fn_defn };
     }
 
-    fn fixFn(s: @This(), fn_defn: Asm.FnDefn) Asm.FnDefn {
+    fn fixFn(s: @This(), fn_defn: Asm.FnDefn, stack_size: i64) Asm.FnDefn {
         var updated_instructions = ArrayList(Asm.Instruction).init(s.arena);
+        updated_instructions.append(.allocateStack(stack_size)) catch unreachable;
         for (fn_defn.instructions.items) |inst| {
             switch (inst) {
                 .Mov => |mov| {
@@ -168,14 +168,14 @@ pub const Asm = struct {
     pub const Instruction = union(enum) {
         Mov: struct { src: Operand, dst: Operand },
         Unary: struct { operator: UnaryOperator, operand: Operand },
-        AllocateStack: usize,
+        AllocateStack: i64,
         Ret,
 
         pub fn ret() Instruction {
             return .Ret;
         }
 
-        pub fn allocateStack(size: usize) Instruction {
+        pub fn allocateStack(size: i64) Instruction {
             return .{ .AllocateStack = size };
         }
 
@@ -219,6 +219,8 @@ pub const Asm = struct {
         // al(lower 8 bit of ax),
         // ah(upper 8 bit of ax)
         rax,
+        rbp,
+        rsp,
         rdx,
         // r10d (lower 32 bit of r10),
         // r10w (lower 16 bit of r10),
@@ -267,7 +269,9 @@ const Printer = struct {
                 s.printOperand(unary.operand);
                 s.write(")");
             },
-            .AllocateStack => unreachable,
+            .AllocateStack => |size| {
+                s.writeFmt("AllocateStack({d})", .{size});
+            },
         }
         s.write("\n");
     }
@@ -282,11 +286,7 @@ const Printer = struct {
     }
 
     fn printRegister(s: @This(), reg: Asm.Register) void {
-        const reg_str = switch (reg) {
-            .rax => "rax",
-            .rdx => "rdx",
-            .r10 => "r10",
-        };
+        const reg_str = @tagName(reg);
         s.writeFmt("Register({s})", .{reg_str});
     }
 

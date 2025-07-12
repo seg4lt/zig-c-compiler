@@ -53,24 +53,28 @@ fn runCompiler(gpa: Allocator) !void {
         .print_codegen = true,
     }) else null;
     compiler_ctx.resetScratchArena();
+    compiler_ctx.deinitTackyArena();
+
+    if (args.flag.assemble) {
+        try CodeEmission.emit(.{
+            .arena = compiler_ctx.codeEmissionArena(),
+            .scratch_arena = compiler_ctx.scratchArena(),
+            .src_path_no_ext = args.src_path[0 .. args.src_path.len - 2],
+            .pg = codegen_pg orelse return error.WaattDHekkCogegenProgramIsNull,
+            .print = true,
+        });
+    }
+    compiler_ctx.resetScratchArena();
     compiler_ctx.deinitCodegenArena();
+    compiler_ctx.deinitCodeEmissionArena();
 
-    _ = codegen_pg;
-
-    // if (args.flag.assemble) {
-    //     try CodeEmission.emit(.{
-    //         .arena = compiler_ctx.codeEmissionArena(),
-    //         .scratch_arena = compiler_ctx.scratchArena(),
-    //         .src_path_no_ext = args.src_path[0 .. args.src_path.len - 2],
-    //         .pg = asm_gen orelse return error.WaattDHekkAsmGenIsNull,
-    //     });
-    // }
-    // compiler_ctx.resetScratchArena();
-    // compiler_ctx.deinitCodeEmissionArena();
-
-    // if (args.flag.link) {
-    //     assembleAndLink(compiler_ctx.scratchArena(), args.src_path[0 .. args.src_path.len - 2], .exe);
-    // }
+    if (args.flag.link) {
+        assembleAndLink(
+            compiler_ctx.scratchArena(),
+            args.src_path[0 .. args.src_path.len - 2],
+            .exe,
+        );
+    }
 }
 
 fn getAllocator() struct { Allocator, bool } {
