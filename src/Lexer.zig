@@ -89,25 +89,29 @@ fn scan(s: *Self) void {
             continue;
         }
         switch (c) {
-            '(' => s.addToken("(", .LParen),
-            ')' => s.addToken(")", .RParen),
-            '{' => s.addToken("{", .LCurly),
-            '}' => s.addToken("}", .RCurly),
-            ';' => s.addToken(";", .Semicolon),
-            '~' => s.addToken("~", .Tilde),
+            '(' => s.addToken(.LParen),
+            ')' => s.addToken(.RParen),
+            '{' => s.addToken(.LCurly),
+            '}' => s.addToken(.RCurly),
+            ';' => s.addToken(.Semicolon),
+            '~' => s.addToken(.Tilde),
+            '+' => s.addToken(.Plus),
             '-' => {
                 if (s.peek() == '-') {
-                    _ = s.consumeAny();
-                    s.addToken("--", .MinusMinus);
-                    continue;
+                    @panic("-- is is not implemented yet");
+                    // _ = s.consumeAny();
+                    // s.addToken("--", .MinusMinus);
+                    // continue;
                 }
-                s.addToken("-", .Minus);
+                s.addToken(.Minus);
             },
             '/' => switch (s.peek()) {
                 '/' => s.comment(),
                 '*' => s.comment(),
-                else => s.addToken("/", .Divide),
+                else => s.addToken(.Divide),
             },
+            '*' => s.addToken(.Multiply),
+            '%' => s.addToken(.Mod),
             else => {
                 s.appendError("Unknown character: {c}\n", .{c});
             },
@@ -148,8 +152,7 @@ fn number(s: *Self) void {
         s.appendError("invalid number\n", .{});
         return; // Don't add a token when we find an error
     }
-    const lexeme = s.src[s.start..s.current];
-    s.addToken(lexeme, .IntLiteral);
+    s.addToken(.IntLiteral);
 }
 
 fn consume(s: *Self, char: u8) u8 {
@@ -176,10 +179,11 @@ fn identOrKeyword(s: *Self) void {
     }
     const lexeme = s.src[s.start..s.current];
     const token_type = getTokenType(lexeme);
-    s.addToken(lexeme, token_type);
+    s.addToken(token_type);
 }
 
-fn addToken(s: *Self, lexeme: []const u8, token_type: TokenType) void {
+fn addToken(s: *Self, token_type: TokenType) void {
+    const lexeme = s.src[s.start..s.current];
     s.tokens.append(Token{
         .lexeme = lexeme,
         .line = s.line,
@@ -225,9 +229,14 @@ pub const TokenType = enum {
     LCurly,
     RCurly,
     Semicolon,
-    Divide,
+
+    // operators
     Tilde,
+    Plus,
     Minus,
+    Multiply,
+    Divide,
+    Mod,
     MinusMinus,
 
     //
