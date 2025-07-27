@@ -44,8 +44,8 @@ fn emitFnDecl(s: Self, fn_decl: Asm.FnDefn) void {
     s.writeFmt("{s}:\n", .{fn_decl.name});
 
     // prologue
-    s.writeFmt("\tpushq\t{s}\n", .{s.fmtRegister(.rbp)});
-    s.writeFmt("\tmovq\t{s}, {s}\n", .{ s.fmtRegister(.rsp), s.fmtRegister(.rbp) });
+    s.writeFmt("\tpushq\t{s}\n", .{s.fmtRegister(.register(.bp, .qword))});
+    s.writeFmt("\tmovq\t{s}, {s}\n", .{ s.fmtRegister(.register(.sp, .qword)), s.fmtRegister(.register(.bp, .qword)) });
 
     for (fn_decl.instructions.items) |item| s.emitInstructions(item);
 }
@@ -68,7 +68,7 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
             if (stack_size != 0) {
                 s.writeFmt("\tsubq\t${d}, {s}\n", .{
                     stack_size,
-                    s.fmtRegister(.rsp),
+                    s.fmtRegister(.register(.sp, .qword)),
                 });
                 s.write("\t# ^^^\tPrologue\n");
             } else {
@@ -78,8 +78,8 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
         .Ret => {
             // epilogue
             s.write("\t# vv\tEpilogue\n");
-            s.writeFmt("\tmovq\t{s}, {s}\n", .{ s.fmtRegister(.rbp), s.fmtRegister(.rsp) });
-            s.writeFmt("\tpopq\t{s}\n", .{s.fmtRegister(.rbp)});
+            s.writeFmt("\tmovq\t{s}, {s}\n", .{ s.fmtRegister(.register(.bp, .qword)), s.fmtRegister(.register(.sp, .qword)) });
+            s.writeFmt("\tpopq\t{s}\n", .{s.fmtRegister(.register(.bp, .qword))});
             s.write("\tret\n");
         },
     }
@@ -98,7 +98,7 @@ fn fmtOperand(s: Self, op: Asm.Operand) []const u8 {
         .Register => |r| s.fmtRegister(r),
         .Stack => |stack_size| std.fmt.allocPrint(s.arena, "{d}({s})", .{
             stack_size,
-            s.fmtRegister(.rbp),
+            s.fmtRegister(.register(.bp, .qword)),
         }) catch unreachable,
         .Pseudo => unreachable, // all variable should be converted to relative stack value
     };
@@ -106,12 +106,37 @@ fn fmtOperand(s: Self, op: Asm.Operand) []const u8 {
 
 fn fmtRegister(s: Self, reg: Asm.Register) []const u8 {
     _ = s;
-    return switch (reg) {
-        .rax => "%eax",
-        .rdx => "%rdx",
-        .rsp => "%rsp",
-        .rbp => "%rbp",
-        .r10 => "%r10d",
+    return switch (reg.type) {
+        .ax => switch (reg.size) {
+            .byte => "%al",
+            .word => "%ax",
+            .dword => "%eax",
+            .qword => "%rax",
+        },
+        .dx => switch (reg.size) {
+            .byte => "%dl",
+            .word => "%dx",
+            .dword => "%edx",
+            .qword => "%rdx",
+        },
+        .sp => switch (reg.size) {
+            .byte => "%spl",
+            .word => "%sp",
+            .dword => "%esp",
+            .qword => "%rsp",
+        },
+        .bp => switch (reg.size) {
+            .byte => "%bpl",
+            .word => "%bp",
+            .dword => "%ebp",
+            .qword => "%rbp",
+        },
+        .r10 => switch (reg.size) {
+            .byte => "%r10b",
+            .word => "%r10w",
+            .dword => "%r10d",
+            .qword => "%r10",
+        },
     };
 }
 

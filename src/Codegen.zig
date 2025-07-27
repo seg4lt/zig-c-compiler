@@ -11,10 +11,10 @@ pub fn emit(opt: Options) Asm.Program {
     var pg = Stage1.init(opt.arena).emitPg(opt.pg);
     if (opt.print_codegen) Printer.print(stdErrorWriter, pg, "Stage 1");
 
-    const stack_size = Stage2.init(opt.arena).processPg(&pg);
+    Stage2.init(opt.arena).processPg(&pg);
     if (opt.print_codegen) Printer.print(stdErrorWriter, pg, "Stage 2");
 
-    const final_pg = Stage3.init(opt.arena).fixPg(pg, stack_size);
+    const final_pg = Stage3.init(opt.arena).fixPg(pg);
     if (opt.print_codegen) Printer.print(stdErrorWriter, final_pg, "Stage 3");
 
     return final_pg;
@@ -41,7 +41,11 @@ const Stage1 = struct {
         for (fn_defn.body.items) |inst| {
             s.emitInst(inst, &instructions);
         }
-        return .{ .name = fn_defn.name, .instructions = instructions };
+        return .{
+            .name = fn_defn.name,
+            .instructions = instructions,
+            .stack_size = 0,
+        };
     }
 
     fn emitInst(s: Self, inst: Tac.Instruction, instructions: *Asm.Instructions) void {
@@ -49,7 +53,7 @@ const Stage1 = struct {
         switch (inst) {
             .Return => |ret| {
                 const src = valToOperand(ret);
-                const dst = Asm.Operand.register(.rax);
+                const dst = Asm.Operand.register(.ax, .dword);
 
                 instructions.append(.mov(src, dst)) catch unreachable;
                 instructions.append(.ret()) catch unreachable;
@@ -79,6 +83,8 @@ const Stage2 = struct {
     arena: Allocator,
     variable_map: *HashMap(i64),
 
+    // Note:
+    // this is set to 4 because any variable we add is just 32-bit int as of now
     const STACK_STEP = 4;
 
     pub fn init(arena: Allocator) Stage2 {
@@ -87,14 +93,15 @@ const Stage2 = struct {
         return .{ .arena = arena, .variable_map = map };
     }
 
-    pub fn processPg(s: @This(), pg: *Asm.Program) i64 {
+    pub fn processPg(s: @This(), pg: *Asm.Program) void {
         s.processFn(&pg.fn_defn);
-        return s.variable_map.count() * STACK_STEP;
     }
+
     fn processFn(s: @This(), fn_defn: *Asm.FnDefn) void {
         for (fn_defn.instructions.items) |*inst| {
             s.processInst(inst);
         }
+        fn_defn.stack_size = s.variable_map.count() * STACK_STEP;
     }
     fn processInst(s: @This(), inst: *Asm.Instruction) void {
         switch (inst.*) {
@@ -131,28 +138,34 @@ const Stage3 = struct {
         return .{ .arena = arena };
     }
 
-    pub fn fixPg(s: @This(), pg: Asm.Program, stack_size: i64) Asm.Program {
-        const fn_defn = s.fixFn(pg.fn_defn, stack_size);
+    pub fn fixPg(s: @This(), pg: Asm.Program) Asm.Program {
+        const fn_defn = s.fixFn(pg.fn_defn);
         return .{ .fn_defn = fn_defn };
     }
 
-    fn fixFn(s: @This(), fn_defn: Asm.FnDefn, stack_size: i64) Asm.FnDefn {
-        var updated_instructions = ArrayList(Asm.Instruction).init(s.arena);
-        updated_instructions.append(.allocateStack(stack_size)) catch unreachable;
+    fn fixFn(s: @This(), fn_defn: Asm.FnDefn) Asm.FnDefn {
+        var instructions = ArrayList(Asm.Instruction).init(s.arena);
+
+        // Align stack size to 16 bytes - which is required as per System V ABI
+        const ALIGNMENT = 16;
+        var aligned_stack_size: usize = fn_defn.stack_size;
+        if (aligned_stack_size % ALIGNMENT != 0) aligned_stack_size += (ALIGNMENT - (aligned_stack_size % ALIGNMENT));
+
+        instructions.append(.allocateStack(aligned_stack_size)) catch unreachable;
         for (fn_defn.instructions.items) |inst| {
             switch (inst) {
                 .Mov => |mov| {
                     if (mov.src == .Stack and mov.dst == .Stack) {
-                        updated_instructions.append(.mov(mov.src, .register(.r10))) catch unreachable;
-                        updated_instructions.append(.mov(.register(.r10), mov.dst)) catch unreachable;
+                        instructions.append(.mov(mov.src, .register(.r10, .dword))) catch unreachable;
+                        instructions.append(.mov(.register(.r10, .dword), mov.dst)) catch unreachable;
                         continue;
                     }
-                    updated_instructions.append(inst) catch unreachable;
+                    instructions.append(inst) catch unreachable;
                 },
-                .Unary, .AllocateStack, .Ret => updated_instructions.append(inst) catch unreachable,
+                .Unary, .AllocateStack, .Ret => instructions.append(inst) catch unreachable,
             }
         }
-        return .{ .name = fn_defn.name, .instructions = updated_instructions };
+        return .{ .name = fn_defn.name, .instructions = instructions, .stack_size = aligned_stack_size };
     }
 };
 
@@ -162,20 +175,21 @@ pub const Asm = struct {
     };
     pub const FnDefn = struct {
         name: []const u8,
+        stack_size: usize,
         instructions: std.ArrayList(Instruction),
     };
     const Instructions = ArrayList(Instruction);
     pub const Instruction = union(enum) {
         Mov: struct { src: Operand, dst: Operand },
         Unary: struct { operator: UnaryOperator, operand: Operand },
-        AllocateStack: i64,
+        AllocateStack: usize,
         Ret,
 
         pub fn ret() Instruction {
             return .Ret;
         }
 
-        pub fn allocateStack(size: i64) Instruction {
+        pub fn allocateStack(size: usize) Instruction {
             return .{ .AllocateStack = size };
         }
 
@@ -209,23 +223,69 @@ pub const Asm = struct {
             return .{ .Imm = value };
         }
 
-        pub fn register(reg: Register) Operand {
-            return .{ .Register = reg };
+        pub fn register(reg: Register.Type, size: Register.Size) Operand {
+            return .{ .Register = .register(reg, size) };
         }
     };
-    pub const Register = enum {
-        // eax(lower 32 bit of rax),
-        // ax(lower 16 bit of rax),
-        // al(lower 8 bit of ax),
-        // ah(upper 8 bit of ax)
-        rax,
-        rbp,
-        rsp,
-        rdx,
-        // r10d (lower 32 bit of r10),
-        // r10w (lower 16 bit of r10),
-        // r10b (lower 8 bit of r10),
-        r10,
+    pub const Register = struct {
+        type: Type,
+        size: Size,
+
+        pub fn register(reg: Register.Type, size: Register.Size) @This() {
+            return .{ .type = reg, .size = size };
+        }
+
+        const Type = enum {
+            ax,
+            bp,
+            sp,
+            dx,
+            r10,
+        };
+        const Size = enum(u8) {
+            byte = 1,
+            word = 2,
+            dword = 4,
+            qword = 8,
+        };
+
+        pub fn format(self: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = options;
+            _ = fmt;
+            const value = switch (self.type) {
+                .ax => switch (self.size) {
+                    .byte => "%al",
+                    .word => "%ax",
+                    .dword => "%eax",
+                    .qword => "%rax",
+                },
+                .dx => switch (self.size) {
+                    .byte => "%dl",
+                    .word => "%dx",
+                    .dword => "%edx",
+                    .qword => "%rdx",
+                },
+                .sp => switch (self.size) {
+                    .byte => "%spl",
+                    .word => "%sp",
+                    .dword => "%esp",
+                    .qword => "%rsp",
+                },
+                .bp => switch (self.size) {
+                    .byte => "%bpl",
+                    .word => "%bp",
+                    .dword => "%ebp",
+                    .qword => "%rbp",
+                },
+                .r10 => switch (self.size) {
+                    .byte => "%r10b",
+                    .word => "%r10w",
+                    .dword => "%r10d",
+                    .qword => "%r10",
+                },
+            };
+            writer.print("{s}", .{value}) catch unreachable;
+        }
     };
 };
 
@@ -286,8 +346,7 @@ const Printer = struct {
     }
 
     fn printRegister(s: @This(), reg: Asm.Register) void {
-        const reg_str = @tagName(reg);
-        s.writeFmt("Register({s})", .{reg_str});
+        s.writeFmt("Register({any})", .{reg});
     }
 
     fn printSpace(s: @This(), depth: usize) void {
