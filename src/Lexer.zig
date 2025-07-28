@@ -94,7 +94,7 @@ fn scan(s: *Self) void {
             '{' => s.addToken(.LCurly),
             '}' => s.addToken(.RCurly),
             ';' => s.addToken(.Semicolon),
-            '~' => s.addToken(.Tilde),
+            '~' => s.addToken(.BitNot),
             '+' => s.addToken(.Plus),
             '-' => {
                 if (s.peek() == '-') {
@@ -231,7 +231,7 @@ pub const TokenType = enum {
     Semicolon,
 
     // operators
-    Tilde,
+    BitNot,
     Plus,
     Minus,
     Multiply,
