@@ -139,7 +139,7 @@ fn scan(s: *Self) void {
                     s.addToken(.GreaterThanEqual);
                     continue;
                 }
-                s.addToken(.LessThan);
+                s.addToken(.GreaterThan);
             },
             '<' => {
                 if (s.peek() == '<') {
@@ -152,7 +152,7 @@ fn scan(s: *Self) void {
                     s.addToken(.LessThanEqual);
                     continue;
                 }
-                s.addToken(.GreaterThan);
+                s.addToken(.LessThan);
             },
             '+' => s.addToken(.Plus),
             '-' => {
