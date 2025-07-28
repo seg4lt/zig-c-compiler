@@ -64,13 +64,13 @@ const Stage1 = struct {
                 instructions.append(.mov(src, dst)) catch unreachable;
                 const operator: Asm.UnaryOperator = switch (unary.operator) {
                     .Negate => .neg,
-                    .Complement => .not,
+                    .BitNot => .bit_not,
                 };
                 instructions.append(.unary(operator, dst)) catch unreachable;
             },
             .Binary => |binary| {
                 switch (binary.operator) {
-                    .Add, .Subtract, .Multiply => {
+                    .LeftShift, .RightShift, .BitAnd, .BitOr, .BitXor, .Add, .Subtract, .Multiply => {
                         const left = valToOperand(binary.left);
                         const dst = valToOperand(binary.dst);
                         instructions.append(.mov(left, dst)) catch unreachable;
@@ -79,6 +79,11 @@ const Stage1 = struct {
                             .Add => Asm.BinaryOperator.Add,
                             .Subtract => Asm.BinaryOperator.Subtract,
                             .Multiply => Asm.BinaryOperator.Multiply,
+                            .LeftShift => Asm.BinaryOperator.LeftShift,
+                            .RightShift => Asm.BinaryOperator.RightShift,
+                            .BitAnd => Asm.BinaryOperator.BitAnd,
+                            .BitOr => Asm.BinaryOperator.BitOr,
+                            .BitXor => Asm.BinaryOperator.BitXor,
                             else => @panic("** Compiler Bug ** Unreachable path: expected add, sub or mul binary operator"),
                         };
                         const right = valToOperand(binary.right);
@@ -207,7 +212,12 @@ const Stage3 = struct {
                 },
                 .Binary => |binary| {
                     switch (binary.operator) {
-                        .Add, .Subtract => {
+                        .LeftShift, .RightShift => {
+                            const reg: Asm.Operand = .register(.cx, .dword);
+                            instructions.append(.mov(binary.operand, reg)) catch unreachable;
+                            instructions.append(.binary(binary.operator, reg, binary.dst)) catch unreachable;
+                        },
+                        .BitAnd, .BitOr, .BitXor, .Add, .Subtract => {
                             const reg: Asm.Operand = .register(.r10, .dword);
                             instructions.append(.mov(binary.operand, reg)) catch unreachable;
                             instructions.append(.binary(binary.operator, reg, binary.dst)) catch unreachable;
@@ -288,12 +298,17 @@ pub const Asm = struct {
     };
     pub const UnaryOperator = enum {
         neg,
-        not,
+        bit_not,
     };
     pub const BinaryOperator = enum {
         Add,
         Subtract,
         Multiply,
+        LeftShift,
+        RightShift,
+        BitAnd,
+        BitOr,
+        BitXor,
     };
     pub const Operand = union(enum) {
         Imm: i64,
@@ -328,6 +343,7 @@ pub const Asm = struct {
         const Type = enum {
             ax,
             bp,
+            cx,
             sp,
             dx,
             r10,
@@ -349,6 +365,12 @@ pub const Asm = struct {
                     .word => "%ax",
                     .dword => "%eax",
                     .qword => "%rax",
+                },
+                .cx => switch (self.size) {
+                    .byte => "%cl",
+                    .word => "%cx",
+                    .dword => "%ecx",
+                    .qword => "%rcx",
                 },
                 .dx => switch (self.size) {
                     .byte => "%dl",
@@ -419,7 +441,7 @@ const Printer = struct {
                 s.write("operator: ");
                 switch (unary.operator) {
                     .neg => s.write("neg"),
-                    .not => s.write("not"),
+                    .bit_not => s.write("bit_not"),
                 }
                 s.write(", ");
                 s.write("operand: ");
@@ -433,6 +455,11 @@ const Printer = struct {
                     .Add => s.write("Add"),
                     .Subtract => s.write("Subtract"),
                     .Multiply => s.write("Multiply"),
+                    .LeftShift => s.write("LeftShift"),
+                    .RightShift => s.write("RightShift"),
+                    .BitAnd => s.write("BitAnd"),
+                    .BitOr => s.write("BitOr"),
+                    .BitXor => s.write("BitXor"),
                 }
                 s.write(", ");
                 s.write("operand: ");
