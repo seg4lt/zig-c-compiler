@@ -54,6 +54,20 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
             instructions.append(.unary(operator, src, dst)) catch unreachable;
             return dst;
         },
+        .Binary => |binary| {
+            const left = s.genExpr(binary.left, instructions);
+            const right = s.genExpr(binary.right, instructions);
+            const dst = s.makeVar();
+            const op = switch (binary.operator) {
+                .Add => Tac.BinaryOperator.Add,
+                .Subtract => Tac.BinaryOperator.Subtract,
+                .Multiply => Tac.BinaryOperator.Multiply,
+                .Divide => Tac.BinaryOperator.Divide,
+                .Mod => Tac.BinaryOperator.Mod,
+            };
+            instructions.append(.binary(op, left, right, dst)) catch unreachable;
+            return dst;
+        },
     };
 }
 pub fn makeVar(s: *Self) Tac.Val {
@@ -77,9 +91,28 @@ pub const Tac = struct {
             src: Val,
             dst: Val,
         },
+        Binary: struct {
+            operator: BinaryOperator,
+            left: Val,
+            right: Val,
+            dst: Val,
+        },
+
+        pub fn binary(operator: BinaryOperator, left: Val, right: Val, dst: Val) Instruction {
+            return .{
+                .Binary = .{
+                    .operator = operator,
+                    .left = left,
+                    .right = right,
+                    .dst = dst,
+                },
+            };
+        }
+
         pub fn ret(val: Val) Instruction {
             return .{ .Return = val };
         }
+
         pub fn unary(operator: UnaryOperator, src: Val, dst: Val) Instruction {
             return .{
                 .Unary = .{
@@ -91,8 +124,8 @@ pub const Tac = struct {
         }
     };
     pub const Val = union(enum) {
-        Const : i64,
-        Var : []const u8,
+        Const: i64,
+        Var: []const u8,
 
         pub fn constant(value: i64) Val {
             return .{ .Const = value };
@@ -105,6 +138,13 @@ pub const Tac = struct {
     pub const UnaryOperator = enum {
         Negate,
         Complement,
+    };
+    pub const BinaryOperator = enum {
+        Add,
+        Subtract,
+        Multiply,
+        Divide,
+        Mod,
     };
 };
 
@@ -137,12 +177,10 @@ const TackyIRPrinter = struct {
             },
             .Unary => |unary| {
                 s.write("Unary(");
-                {
-                    s.write("operator: ");
-                    switch (unary.operator) {
-                        .Negate => s.write("Negate"),
-                        .Complement => s.write("Complement"),
-                    }
+                s.write("operator: ");
+                switch (unary.operator) {
+                    .Negate => s.write("Negate"),
+                    .Complement => s.write("Complement"),
                 }
                 s.write(", ");
                 s.write("src: ");
@@ -150,6 +188,29 @@ const TackyIRPrinter = struct {
                 s.write(", ");
                 s.write("dst: ");
                 s.printVal(unary.dst);
+                s.write(")");
+            },
+            .Binary => |binary| {
+                s.write("Binary(");
+                s.write("operator: ");
+                switch (binary.operator) {
+                    .Add => s.write("Add"),
+                    .Subtract => s.write("Subtract"),
+                    .Multiply => s.write("Multiply"),
+                    .Divide => s.write("Divide"),
+                    .Mod => s.write("Mod"),
+                }
+                s.write(", ");
+                
+                s.write("dst: ");
+                s.printVal(binary.dst);
+                
+                s.write(", left: ");
+                s.printVal(binary.left);
+                
+                s.write(", right: ");
+                s.printVal(binary.right);
+                
                 s.write(")");
             },
         }
