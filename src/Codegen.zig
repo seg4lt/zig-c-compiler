@@ -70,8 +70,8 @@ const Stage1 = struct {
                     const dst = valToOperand(unary.dst);
                     instructions.append(.mov(src, dst)) catch unreachable;
                     const operator: Asm.UnaryOperator = switch (unary.operator) {
-                        .Negate => .neg,
-                        .BitNot => .bit_not,
+                        .Negate => .Neg,
+                        .BitNot => .BitNot,
                         .Not => @panic("** Compiler Bug ** Unreachable path: expected negate or bit_not unary operator"),
                     };
                     instructions.append(.unary(operator, dst)) catch unreachable;
@@ -424,8 +424,8 @@ pub const Asm = struct {
     };
 
     pub const UnaryOperator = enum {
-        neg,
-        bit_not,
+        Neg,
+        BitNot,
     };
     pub const BinaryOperator = enum {
         Add,
@@ -566,8 +566,8 @@ const Printer = struct {
             .Unary => |unary| {
                 s.write("Unary ");
                 switch (unary.operator) {
-                    .neg => s.write("neg"),
-                    .bit_not => s.write("bit_not"),
+                    .Neg => s.write("Neg"),
+                    .BitNot => s.write("BitNot"),
                 }
                 s.write(", ");
                 s.printOperand(unary.operand);

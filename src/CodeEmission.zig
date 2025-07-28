@@ -151,8 +151,8 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
 
 fn fmtUnaryOperator(operator: Asm.UnaryOperator) []const u8 {
     return switch (operator) {
-        .neg => "negl",
-        .bit_not => "notl",
+        .Neg => "negl",
+        .BitNot => "notl",
     };
 }
 
