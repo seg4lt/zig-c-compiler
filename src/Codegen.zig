@@ -68,6 +68,42 @@ const Stage1 = struct {
                 };
                 instructions.append(.unary(operator, dst)) catch unreachable;
             },
+            .Binary => |binary| {
+                switch (binary.operator) {
+                    .Add, .Subtract, .Multiply => {
+                        const left = valToOperand(binary.left);
+                        const dst = valToOperand(binary.dst);
+                        instructions.append(.mov(left, dst)) catch unreachable;
+
+                        const op = switch (binary.operator) {
+                            .Add => Asm.BinaryOperator.Add,
+                            .Subtract => Asm.BinaryOperator.Subtract,
+                            .Multiply => Asm.BinaryOperator.Multiply,
+                            else => @panic("** Compiler Bug ** Unreachable path: expected add, sub or mul binary operator"),
+                        };
+                        const right = valToOperand(binary.right);
+                        instructions.append(.binary(op, right, dst)) catch unreachable;
+                    },
+                    .Divide, .Mod => {
+                        const left = valToOperand(binary.left);
+                        const first_move_dst: Asm.Operand = .register(.ax, .dword);
+                        instructions.append(.mov(left, first_move_dst)) catch unreachable;
+
+                        instructions.append(.cdq()) catch unreachable;
+
+                        const right = valToOperand(binary.right);
+                        instructions.append(.idiv(right)) catch unreachable;
+
+                        const final_mov_src: Asm.Operand = switch (binary.operator) {
+                            .Divide => .register(.ax, .dword),
+                            .Mod => .register(.dx, .dword),
+                            else => @panic("** Compiler Bug ** Unreachable path: expected divide or mod binary operator"),
+                        };
+                        const final_mov_dst: Asm.Operand = valToOperand(binary.dst);
+                        instructions.append(.mov(final_mov_src, final_mov_dst)) catch unreachable;
+                    },
+                }
+            },
         }
     }
     fn valToOperand(val: Tac.Val) Asm.Operand {
@@ -112,7 +148,14 @@ const Stage2 = struct {
             .Unary => |*unary| {
                 unary.operand = s.mapOperandToStack(unary.operand);
             },
-            .AllocateStack, .Ret => {},
+            .Binary => |*binary| {
+                binary.operand = s.mapOperandToStack(binary.operand);
+                binary.dst = s.mapOperandToStack(binary.dst);
+            },
+            .IDiv => |*operand| {
+                operand.* = s.mapOperandToStack(operand.*);
+            },
+            .Cdq, .AllocateStack, .Ret => {}, // noop
         }
     }
     fn mapOperandToStack(s: @This(), operand: Asm.Operand) Asm.Operand {
@@ -162,7 +205,32 @@ const Stage3 = struct {
                     }
                     instructions.append(inst) catch unreachable;
                 },
-                .Unary, .AllocateStack, .Ret => instructions.append(inst) catch unreachable,
+                .Binary => |binary| {
+                    switch (binary.operator) {
+                        .Add, .Subtract => {
+                            const reg: Asm.Operand = .register(.r10, .dword);
+                            instructions.append(.mov(binary.operand, reg)) catch unreachable;
+                            instructions.append(.binary(binary.operator, reg, binary.dst)) catch unreachable;
+                        },
+                        .Multiply => {
+                            const reg: Asm.Operand = .register(.r11, .dword);
+                            instructions.append(.mov(binary.dst, reg)) catch unreachable;
+                            instructions.append(.binary(binary.operator, binary.operand, reg)) catch unreachable;
+                            instructions.append(.mov(reg, binary.dst)) catch unreachable;
+                        },
+                    }
+                },
+                .IDiv => |operand| {
+                    switch (operand) {
+                        .Imm => {
+                            const reg: Asm.Operand = .register(.r10, .dword);
+                            instructions.append(.mov(operand, reg)) catch unreachable;
+                            instructions.append(.idiv(reg)) catch unreachable;
+                        },
+                        else => instructions.append(inst) catch unreachable,
+                    }
+                },
+                .Cdq, .Unary, .AllocateStack, .Ret => instructions.append(inst) catch unreachable,
             }
         }
         return .{ .name = fn_defn.name, .instructions = instructions, .stack_size = aligned_stack_size };
@@ -182,8 +250,25 @@ pub const Asm = struct {
     pub const Instruction = union(enum) {
         Mov: struct { src: Operand, dst: Operand },
         Unary: struct { operator: UnaryOperator, operand: Operand },
+        Binary: struct { operator: BinaryOperator, operand: Operand, dst: Operand },
+        IDiv: Operand,
+        Cdq,
         AllocateStack: usize,
         Ret,
+
+        pub fn cdq() Instruction {
+            return .Cdq;
+        }
+
+        pub fn idiv(operand: Operand) Instruction {
+            return .{ .IDiv = operand };
+        }
+
+        pub fn binary(operator: BinaryOperator, operand: Operand, dst: Operand) Instruction {
+            return .{
+                .Binary = .{ .operator = operator, .operand = operand, .dst = dst },
+            };
+        }
 
         pub fn ret() Instruction {
             return .Ret;
@@ -204,6 +289,11 @@ pub const Asm = struct {
     pub const UnaryOperator = enum {
         neg,
         not,
+    };
+    pub const BinaryOperator = enum {
+        Add,
+        Subtract,
+        Multiply,
     };
     pub const Operand = union(enum) {
         Imm: i64,
@@ -241,6 +331,7 @@ pub const Asm = struct {
             sp,
             dx,
             r10,
+            r11,
         };
         const Size = enum(u8) {
             byte = 1,
@@ -282,6 +373,12 @@ pub const Asm = struct {
                     .word => "%r10w",
                     .dword => "%r10d",
                     .qword => "%r10",
+                },
+                .r11 => switch (self.size) {
+                    .byte => "%r11b",
+                    .word => "%r11w",
+                    .dword => "%r11d",
+                    .qword => "%r11",
                 },
             };
             writer.print("{s}", .{value}) catch unreachable;
@@ -328,6 +425,30 @@ const Printer = struct {
                 s.write("operand: ");
                 s.printOperand(unary.operand);
                 s.write(")");
+            },
+            .Binary => |binary| {
+                s.write("Binary(");
+                s.write("operator: ");
+                switch (binary.operator) {
+                    .Add => s.write("Add"),
+                    .Subtract => s.write("Subtract"),
+                    .Multiply => s.write("Multiply"),
+                }
+                s.write(", ");
+                s.write("operand: ");
+                s.printOperand(binary.operand);
+                s.write(", ");
+                s.write("dst: ");
+                s.printOperand(binary.dst);
+                s.write(")");
+            },
+            .IDiv => |operand| {
+                s.write("IDiv(");
+                s.printOperand(operand);
+                s.write(")");
+            },
+            .Cdq => {
+                s.write("Cdq");
             },
             .AllocateStack => |size| {
                 s.writeFmt("AllocateStack({d})", .{size});
