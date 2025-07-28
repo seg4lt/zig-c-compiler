@@ -44,8 +44,8 @@ fn emitFnDecl(s: Self, fn_decl: Asm.FnDefn) void {
     s.writeFmt("{s}:\n", .{fn_decl.name});
 
     // prologue
-    s.writeFmt("\tpushq\t{s}\n", .{s.fmtRegister(.register(.bp, .qword))});
-    s.writeFmt("\tmovq\t{s}, {s}\n", .{ s.fmtRegister(.register(.sp, .qword)), s.fmtRegister(.register(.bp, .qword)) });
+    s.writeFmt("\tpushq\t{any}\n", .{Asm.Register.register(.bp, .qword)});
+    s.writeFmt("\tmovq\t{any}, {any}\n", .{ Asm.Register.register(.sp, .qword), Asm.Register.register(.bp, .qword) });
 
     for (fn_decl.instructions.items) |item| s.emitInstructions(item);
 }
@@ -64,11 +64,29 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
                 s.fmtOperand(unary.operand),
             });
         },
+        .Binary => |binary| {
+            const op = switch (binary.operator) {
+                .Add => "addl",
+                .Subtract => "subl",
+                .Multiply => "imull",
+            };
+            const dst = s.fmtOperand(binary.dst);
+            const src = s.fmtOperand(binary.operand);
+            s.writeFmt("\t{s}\t{s}, {s}\n", .{ op, src, dst });
+        },
+        .IDiv => |operand| {
+            const op = "idivl";
+            const divider = s.fmtOperand(operand);
+            s.writeFmt("\t{s}\t{s}\n", .{ op, divider });
+        },
+        .Cdq => {
+            s.write("\tcdq\n");
+        },
         .AllocateStack => |stack_size| {
             if (stack_size != 0) {
-                s.writeFmt("\tsubq\t${d}, {s}\n", .{
+                s.writeFmt("\tsubq\t${d}, {any}\n", .{
                     stack_size,
-                    s.fmtRegister(.register(.sp, .qword)),
+                    Asm.Register.register(.sp, .qword),
                 });
                 s.write("\t# ^^^\tPrologue\n");
             } else {
@@ -78,8 +96,14 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
         .Ret => {
             // epilogue
             s.write("\t# vv\tEpilogue\n");
-            s.writeFmt("\tmovq\t{s}, {s}\n", .{ s.fmtRegister(.register(.bp, .qword)), s.fmtRegister(.register(.sp, .qword)) });
-            s.writeFmt("\tpopq\t{s}\n", .{s.fmtRegister(.register(.bp, .qword))});
+            s.writeFmt(
+                "\tmovq\t{any}, {any}\n",
+                .{
+                    Asm.Register.register(.bp, .qword),
+                    Asm.Register.register(.sp, .qword),
+                },
+            );
+            s.writeFmt("\tpopq\t{any}\n", .{Asm.Register.register(.bp, .qword)});
             s.write("\tret\n");
         },
     }
@@ -95,52 +119,16 @@ fn fmtUnaryOperator(operator: Asm.UnaryOperator) []const u8 {
 fn fmtOperand(s: Self, op: Asm.Operand) []const u8 {
     return switch (op) {
         .Imm => |imm| std.fmt.allocPrint(s.arena, "${d}", .{imm}) catch unreachable,
-        .Register => |r| s.fmtRegister(r),
-        .Stack => |stack_size| std.fmt.allocPrint(s.arena, "{d}({s})", .{
+        .Register => |r| std.fmt.allocPrint(s.arena, "{any}", .{r}) catch unreachable,
+        .Stack => |stack_size| std.fmt.allocPrint(s.arena, "{d}({any})", .{
             stack_size,
-            s.fmtRegister(.register(.bp, .qword)),
+            Asm.Register.register(.bp, .qword),
         }) catch unreachable,
         .Pseudo => unreachable, // all variable should be converted to relative stack value
     };
 }
 
-fn fmtRegister(s: Self, reg: Asm.Register) []const u8 {
-    _ = s;
-    return switch (reg.type) {
-        .ax => switch (reg.size) {
-            .byte => "%al",
-            .word => "%ax",
-            .dword => "%eax",
-            .qword => "%rax",
-        },
-        .dx => switch (reg.size) {
-            .byte => "%dl",
-            .word => "%dx",
-            .dword => "%edx",
-            .qword => "%rdx",
-        },
-        .sp => switch (reg.size) {
-            .byte => "%spl",
-            .word => "%sp",
-            .dword => "%esp",
-            .qword => "%rsp",
-        },
-        .bp => switch (reg.size) {
-            .byte => "%bpl",
-            .word => "%bp",
-            .dword => "%ebp",
-            .qword => "%rbp",
-        },
-        .r10 => switch (reg.size) {
-            .byte => "%r10b",
-            .word => "%r10w",
-            .dword => "%r10d",
-            .qword => "%r10",
-        },
-    };
-}
-
-fn write(s: Self, comptime bytes: []const u8) void {
+fn write(s: Self, bytes: []const u8) void {
     _ = s.writer.write(bytes) catch unreachable;
 }
 
