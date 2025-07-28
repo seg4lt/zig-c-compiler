@@ -95,8 +95,38 @@ fn scan(s: *Self) void {
             '}' => s.addToken(.RCurly),
             ';' => s.addToken(.Semicolon),
             '~' => s.addToken(.BitNot),
-            '&' => s.addToken(.BitAnd),
-            '|' => s.addToken(.BitOr),
+            '!' => {
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.NotEqual);
+                    continue;
+                }
+                s.addToken(.Not);
+            },
+            '=' => {
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.EqualEqual);
+                    continue;
+                }
+                @panic("'=' assigment not implemented");
+            },
+            '&' => {
+                if (s.peek() == '&') {
+                    _ = s.consumeAny();
+                    s.addToken(.And);
+                    continue;
+                }
+                s.addToken(.BitAnd);
+            },
+            '|' => {
+                if (s.peek() == '|') {
+                    _ = s.consumeAny();
+                    s.addToken(.Or);
+                    continue;
+                }
+                s.addToken(.BitOr);
+            },
             '^' => s.addToken(.BitXor),
             '>' => {
                 if (s.peek() == '>') {
@@ -104,7 +134,12 @@ fn scan(s: *Self) void {
                     s.addToken(.RightShift);
                     continue;
                 }
-                @panic("not implemented");
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.GreaterThanEqual);
+                    continue;
+                }
+                s.addToken(.LessThan);
             },
             '<' => {
                 if (s.peek() == '<') {
@@ -112,7 +147,12 @@ fn scan(s: *Self) void {
                     s.addToken(.LeftShift);
                     continue;
                 }
-                @panic("not implemented");
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.LessThanEqual);
+                    continue;
+                }
+                s.addToken(.GreaterThan);
             },
             '+' => s.addToken(.Plus),
             '-' => {
@@ -261,6 +301,15 @@ pub const TokenType = enum {
     Multiply,
     Divide,
     Mod,
+    Not,
+    And,
+    Or,
+    EqualEqual,
+    NotEqual,
+    LessThan,
+    LessThanEqual,
+    GreaterThan,
+    GreaterThanEqual,
     MinusMinus,
 
     //
