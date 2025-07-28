@@ -95,6 +95,25 @@ fn scan(s: *Self) void {
             '}' => s.addToken(.RCurly),
             ';' => s.addToken(.Semicolon),
             '~' => s.addToken(.BitNot),
+            '&' => s.addToken(.BitAnd),
+            '|' => s.addToken(.BitOr),
+            '^' => s.addToken(.BitXor),
+            '>' => {
+                if (s.peek() == '>') {
+                    _ = s.consumeAny();
+                    s.addToken(.RightSift);
+                    continue;
+                }
+                @panic("not implemented");
+            },
+            '<' => {
+                if (s.peek() == '<') {
+                    _ = s.consumeAny();
+                    s.addToken(.LeftShit);
+                    continue;
+                }
+                @panic("not implemented");
+            },
             '+' => s.addToken(.Plus),
             '-' => {
                 if (s.peek() == '-') {
@@ -232,6 +251,11 @@ pub const TokenType = enum {
 
     // operators
     BitNot,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LeftShit,
+    RightSift,
     Plus,
     Minus,
     Multiply,
