@@ -91,16 +91,16 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
 
 fn parseReturnStmt(p: *Self) ParseError!*Ast.Stmt {
     const return_token = try p.consume(.Return);
-    const expr = try p.parseExpr();
+    const expr = try p.parseExpr(0);
     _ = try p.consume(.Semicolon);
     return .returnStmt(p.arena, expr, return_token.line, return_token.start);
 }
 
-fn parseExpr(p: *Self) ParseError!*Ast.Expr {
+fn parseFactor(p: *Self) ParseError!*Ast.Expr {
     const token = p.peek() orelse {
         try p.parseError(
-            ParseError.StatementExpected,
-            "Unexpected end of input while parsing expression",
+            ParseError.UnexpectedEndOfToken,
+            "Unexpected end of input while parsing factor",
             .{},
         );
     };
@@ -116,39 +116,88 @@ fn parseExpr(p: *Self) ParseError!*Ast.Expr {
             };
             return .constantExpr(p.arena, value, int_literal.line, int_literal.start);
         },
-        .Minus, .Tilde => {
-            _ = try p.consumeAny();
-            const operator = try p.parseUnaryOperator(token.type);
-            const inner_expr = try p.parseExpr();
-            return .unaryExpr(p.arena, operator, inner_expr, token.line, token.start);
+        .BitNot, .Minus => {
+            const op_token = try p.consumeAny();
+            const operator = try p.parseUnaryOperator(op_token.type);
+            const inner_expr = try p.parseFactor();
+            return .unaryExpr(p.arena, operator, inner_expr, op_token.line, op_token.start);
         },
         .LParen => {
             _ = try p.consume(.LParen);
-            const inner_expr = try p.parseExpr();
+            const inner_expr = try p.parseExpr(0);
             _ = try p.consume(.RParen);
             return inner_expr;
         },
         else => try p.parseError(
             ParseError.UnexpectedToken,
-            "Unexpected token while parsing expression `{s}` << {s} >>",
+            "Unexpected token while parsing factor`{s}` << {s} >>",
             .{ token.lexeme, @tagName(token.type) },
         ),
     }
 }
 
-fn parseUnaryOperator(p: *Self, token_type: TokenType) ParseError!Ast.UnaryOperator {
+fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
+    var left = try p.parseFactor();
+
+    while (true) {
+        const next_token = p.peek() orelse {
+            try p.parseError(
+                ParseError.StatementExpected,
+                "Unexpected end of input while parsing expression",
+                .{},
+            );
+        };
+        const continue_expr_parse = isBinaryOperator(next_token.type) and try p.getPrecedence(next_token.type) >= min_prec;
+        
+        if (!continue_expr_parse) {
+            break;
+        }
+
+        const op_token = try p.consumeAny();
+        const op = try p.parseBinaryOperator(op_token.type);
+        const right = try p.parseExpr(try p.getPrecedence(next_token.type) + 1);
+        const binary: *Ast.Expr = .binaryExpr(p.arena, op, left, right, op_token.line, op_token.start);
+        left = binary;
+    }
+    return left;
+}
+
+fn isBinaryOperator(token_type: TokenType) bool {
     return switch (token_type) {
-        .Minus => .Negate,
-        .Tilde => .Complement,
-        else => try p.parseError(
-            ParseError.UnexpectedToken,
-            "Unexpected token << {s} >> for unary operator",
-            .{@tagName(token_type)},
-        ),
+        .Plus, .Minus, .Multiply, .Divide, .Mod => true,
+        else => false,
     };
 }
 
-fn parseError(p: *Self, e: ParseError, comptime fmt: []const u8, args: anytype) ParseError!noreturn {
+fn parseBinaryOperator(p: Self, token_type: TokenType) ParseError!Ast.BinaryOperator {
+    return switch (token_type) {
+        .Plus => .Add,
+        .Minus => .Subtract,
+        .Multiply => .Multiply,
+        .Divide => .Divide,
+        .Mod => .Mod,
+        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseBinaryOperator called on non binary token", .{}),
+    };
+}
+
+fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
+    return switch (token_type) {
+        .BitNot => 70,
+        .Divide, .Multiply, .Mod => 50,
+        .Minus, .Plus => 45,
+        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** precedence level asked for something that doesn't support precendence", .{}),
+    };
+}
+
+fn parseUnaryOperator(p: Self, token_type: TokenType) ParseError!Ast.UnaryOperator {
+    return switch (token_type) {
+        .Minus => .Negate,
+        .BitNot => .Complement,
+        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseUnaryOperator called on non unary token", .{}),
+    };
+}
+
+fn parseError(p: Self, e: ParseError, comptime fmt: []const u8, args: anytype) ParseError!noreturn {
     const token = p.peek() orelse {
         // If we reach here, it means we are at the end of input.
         // We can report the error without a token.
@@ -189,18 +238,18 @@ fn consume(p: *Self, expected: TokenType) ParseError!*const Token {
     return tok;
 }
 
-fn peek(p: *Self) ?*const Token {
+fn peek(p: Self) ?*const Token {
     return p.peekOffset(0);
 }
-fn peekOffset(p: *Self, offset: i8) ?*const Token {
+fn peekOffset(p: Self, offset: i8) ?*const Token {
     if (p.isAtEnd()) return null;
     return &p.tokens[p.current + @as(usize, @intCast(offset))];
 }
 
-fn isAtEnd(p: *Self) bool {
+fn isAtEnd(p: Self) bool {
     return p.isAtEndOffset(0);
 }
-fn isAtEndOffset(p: *Self, offset: usize) bool {
+fn isAtEndOffset(p: Self, offset: usize) bool {
     return (p.current + offset) >= p.tokens.len;
 }
 
@@ -246,6 +295,20 @@ pub const Ast = struct {
     pub const Expr = union(enum) {
         Constant: struct { value: i64, loc: SourceLocation },
         Unary: struct { operator: UnaryOperator, expr: *Expr, loc: SourceLocation },
+        Binary: struct { operator: BinaryOperator, left: *Expr, right: *Expr, loc: SourceLocation },
+
+        pub fn binaryExpr(allocator: Allocator, operator: BinaryOperator, left: *Expr, right: *Expr, line: usize, start: usize) *Expr {
+            const expr = allocator.create(Expr) catch unreachable;
+            expr.* = .{
+                .Binary = .{
+                    .operator = operator,
+                    .left = left,
+                    .right = right,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return expr;
+        }
 
         pub fn unaryExpr(allocator: Allocator, operator: UnaryOperator, inner_expr: *Expr, line: usize, start: usize) *Expr {
             const expr = allocator.create(Expr) catch unreachable;
@@ -274,6 +337,14 @@ pub const Ast = struct {
         Negate,
         Complement,
     };
+    const BinaryOperator = enum {
+        Add,
+        Subtract,
+        Multiply,
+        Divide,
+        Mod,
+    };
+
     const SourceLocation = struct {
         line: usize,
         start: usize,
@@ -284,7 +355,8 @@ const ParseError = error{
     UnexpectedToken,
     StatementExpected,
     IntExpected,
-};
+    UnexpectedEndOfToken,
+} || CompilerError;
 
 const AstPrinter = struct {
     pub fn print(writer: AnyWriter, pg: *const Ast.Program) void {
@@ -329,6 +401,21 @@ const AstPrinter = struct {
                 printExpr(writer, unary_expr.expr);
                 write(writer, ")");
             },
+            .Binary => |binary_expr| {
+                write(writer, "(");
+                printExpr(writer, binary_expr.left);
+                writeFmt(writer, " {s} ", .{
+                    switch (binary_expr.operator) {
+                        .Add => "+",
+                        .Subtract => "-",
+                        .Multiply => "*",
+                        .Divide => "/",
+                        .Mod => "%",
+                    },
+                });
+                printExpr(writer, binary_expr.right);
+                write(writer, ")");
+            },
         }
     }
 
@@ -353,3 +440,4 @@ const ArrayList = std.ArrayList;
 const TokenType = Lexer.TokenType;
 const Token = Lexer.Token;
 const AnyWriter = std.io.AnyWriter;
+const CompilerError = @import("util.zig").CompilerError;
