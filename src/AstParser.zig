@@ -203,8 +203,8 @@ fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
         .Minus, .Plus => 45,
         .LeftShift, .RightShift => 40,
         .BitAnd => 25,
-        .BitOr => 24,
-        .BitXor => 23,
+        .BitXor => 24,
+        .BitOr => 23,
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** precedence level asked for something that doesn't support precendence", .{}),
     };
 }

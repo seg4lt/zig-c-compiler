@@ -69,6 +69,11 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
                 .Add => "addl",
                 .Subtract => "subl",
                 .Multiply => "imull",
+                .LeftShift => "sall", // doing arthmetic shift - shll for logical shift
+                .RightShift => "sarl", // doing arthmetic shift - shrl for logical
+                .BitAnd => "andl",
+                .BitOr => "orl",
+                .BitXor => "xorl",
             };
             const dst = s.fmtOperand(binary.dst);
             const src = s.fmtOperand(binary.operand);
@@ -112,7 +117,7 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
 fn fmtUnaryOperator(operator: Asm.UnaryOperator) []const u8 {
     return switch (operator) {
         .neg => "negl",
-        .not => "notl",
+        .bit_not => "notl",
     };
 }
 
