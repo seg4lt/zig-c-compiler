@@ -22,9 +22,9 @@ pub fn emit(opt: Options) !void {
     s.emitProgram(opt.pg);
 
     if (opt.print) {
-        const stdout = std.io.getStdOut();
-        _ = stdout.write("-- ASM --\n") catch unreachable;
-        _ = stdout.write(buffer.items) catch unreachable;
+        const stdErr = std.io.getStdErr();
+        _ = stdErr.write("-- ASM --\n") catch unreachable;
+        _ = stdErr.write(buffer.items) catch unreachable;
     }
 
     const asm_file = std.fmt.allocPrint(opt.scratch_arena, "{s}.s", .{opt.src_path_no_ext}) catch unreachable;
@@ -83,6 +83,41 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
             const op = "idivl";
             const divider = s.fmtOperand(operand);
             s.writeFmt("\t{s}\t{s}\n", .{ op, divider });
+        },
+        .Cmp => |cmp| {
+            const op = "cmpl";
+            const left = s.fmtOperand(cmp.op1);
+            const right = s.fmtOperand(cmp.op2);
+            s.writeFmt("\t{s}\t{s}, {s}\n", .{ op, left, right });
+        },
+        .Jmp => |jmp| {
+            const op = "jmp";
+            s.writeFmt("\t{s}\t{s}\n", .{ op, jmp });
+        },
+        .JmpCC => |jmp_cc| {
+            const op = switch (jmp_cc.condition_code) {
+                .EqualEqual => "je",
+                .NotEqual => "jne",
+                .GreaterThan => "jg",
+                .GreaterThanEqual => "jge",
+                .LessThan => "jl",
+                .LessThanEqual => "jle",
+            };
+            s.writeFmt("\t{s}\t{s}\n", .{ op, jmp_cc.label });
+        },
+        .SetCC => |set_cc| {
+            const op = switch (set_cc.condition_code) {
+                .EqualEqual => "sete",
+                .NotEqual => "setne",
+                .GreaterThan => "setg",
+                .GreaterThanEqual => "setge",
+                .LessThan => "setl",
+                .LessThanEqual => "setle",
+            };
+            s.writeFmt("\t{s}\t{s}\n", .{ op, s.fmtOperand(set_cc.dst) });
+        },
+        .Label => |label| {
+            s.writeFmt("{s}:\n", .{label});
         },
         .Cdq => {
             s.write("\tcdq\n");
