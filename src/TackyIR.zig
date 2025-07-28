@@ -49,7 +49,7 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
             const dst = s.makeVar();
             const operator: Tac.UnaryOperator = switch (unary.operator) {
                 .Negate => .Negate,
-                .Complement => .Complement,
+                .BitNot => .BitNot,
             };
             instructions.append(.unary(operator, src, dst)) catch unreachable;
             return dst;
@@ -64,6 +64,11 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
                 .Multiply => Tac.BinaryOperator.Multiply,
                 .Divide => Tac.BinaryOperator.Divide,
                 .Mod => Tac.BinaryOperator.Mod,
+                .BitAnd => Tac.BinaryOperator.BitAnd,
+                .BitOr => Tac.BinaryOperator.BitOr,
+                .BitXor => Tac.BinaryOperator.BitXor,
+                .LeftShift => Tac.BinaryOperator.LeftShift,
+                .RightShift => Tac.BinaryOperator.RightShift,
             };
             instructions.append(.binary(op, left, right, dst)) catch unreachable;
             return dst;
@@ -137,7 +142,7 @@ pub const Tac = struct {
     };
     pub const UnaryOperator = enum {
         Negate,
-        Complement,
+        BitNot,
     };
     pub const BinaryOperator = enum {
         Add,
@@ -145,6 +150,11 @@ pub const Tac = struct {
         Multiply,
         Divide,
         Mod,
+        LeftShift,
+        RightShift,
+        BitAnd,
+        BitOr,
+        BitXor,
     };
 };
 
@@ -180,7 +190,7 @@ const TackyIRPrinter = struct {
                 s.write("operator: ");
                 switch (unary.operator) {
                     .Negate => s.write("Negate"),
-                    .Complement => s.write("Complement"),
+                    .BitNot => s.write("BitNot"),
                 }
                 s.write(", ");
                 s.write("src: ");
@@ -199,18 +209,23 @@ const TackyIRPrinter = struct {
                     .Multiply => s.write("Multiply"),
                     .Divide => s.write("Divide"),
                     .Mod => s.write("Mod"),
+                    .LeftShift => s.write("LeftShift"),
+                    .RightShift => s.write("RightShift"),
+                    .BitAnd => s.write("BitAnd"),
+                    .BitOr => s.write("BitOr"),
+                    .BitXor => s.write("BitXor"),
                 }
                 s.write(", ");
-                
+
                 s.write("dst: ");
                 s.printVal(binary.dst);
-                
+
                 s.write(", left: ");
                 s.printVal(binary.left);
-                
+
                 s.write(", right: ");
                 s.printVal(binary.right);
-                
+
                 s.write(")");
             },
         }
