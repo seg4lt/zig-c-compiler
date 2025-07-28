@@ -41,7 +41,7 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
         };
     }
 
-    if (opt.print_ast) AstPrinter.print(std.io.getStdOut().writer().any(), pg);
+    if (opt.print_ast) AstPrinter.print(std.io.getStdErr().writer().any(), pg);
 
     return pg;
 }
@@ -116,7 +116,7 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             };
             return .constantExpr(p.arena, value, int_literal.line, int_literal.start);
         },
-        .BitNot, .Minus => {
+        .BitNot, .Minus, .Not => {
             const op_token = try p.consumeAny();
             const operator = try p.parseUnaryOperator(op_token.type);
             const inner_expr = try p.parseFactor();
@@ -175,6 +175,14 @@ fn isBinaryOperator(token_type: TokenType) bool {
         .BitXor,
         .LeftShift,
         .RightShift,
+        .And,
+        .Or,
+        .EqualEqual,
+        .NotEqual,
+        .LessThan,
+        .LessThanEqual,
+        .GreaterThan,
+        .GreaterThanEqual,
         => true,
         else => false,
     };
@@ -192,6 +200,15 @@ fn parseBinaryOperator(p: Self, token_type: TokenType) ParseError!Ast.BinaryOper
         .BitXor => .BitXor,
         .LeftShift => .LeftShift,
         .RightShift => .RightShift,
+        .And => .And,
+        .Or => .Or,
+        .EqualEqual => .EqualEqual,
+        .NotEqual => .NotEqual,
+        .LessThan => .LessThan,
+        .LessThanEqual => .LessThanEqual,
+        .GreaterThan => .GreaterThan,
+        .GreaterThanEqual => .GreaterThanEqual,
+
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseBinaryOperator called on non binary token", .{}),
     };
 }
@@ -202,9 +219,14 @@ fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
         .Divide, .Multiply, .Mod => 50,
         .Minus, .Plus => 45,
         .LeftShift, .RightShift => 40,
+        .LessThan, .LessThanEqual, .GreaterThan, .GreaterThanEqual => 35,
+        .EqualEqual, .NotEqual => 30,
         .BitAnd => 25,
         .BitXor => 24,
         .BitOr => 23,
+        .And => 10,
+        .Or => 5,
+
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** precedence level asked for something that doesn't support precendence", .{}),
     };
 }
@@ -213,6 +235,7 @@ fn parseUnaryOperator(p: Self, token_type: TokenType) ParseError!Ast.UnaryOperat
     return switch (token_type) {
         .Minus => .Negate,
         .BitNot => .BitNot,
+        .Not => .Not,
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseUnaryOperator called on non unary token", .{}),
     };
 }
@@ -356,6 +379,7 @@ pub const Ast = struct {
     const UnaryOperator = enum {
         Negate,
         BitNot,
+        Not,
     };
     const BinaryOperator = enum {
         Add,
@@ -368,6 +392,15 @@ pub const Ast = struct {
         BitXor,
         LeftShift,
         RightShift,
+
+        And,
+        Or,
+        EqualEqual,
+        NotEqual,
+        LessThan,
+        LessThanEqual,
+        GreaterThan,
+        GreaterThanEqual,
     };
 
     const SourceLocation = struct {
@@ -421,6 +454,7 @@ const AstPrinter = struct {
                     switch (unary_expr.operator) {
                         .Negate => "-",
                         .BitNot => "~",
+                        .Not => "!",
                     },
                 });
                 printExpr(writer, unary_expr.expr);
@@ -441,6 +475,14 @@ const AstPrinter = struct {
                         .BitXor => "^",
                         .LeftShift => "<<",
                         .RightShift => ">>",
+                        .And => "&&",
+                        .Or => "||",
+                        .EqualEqual => "==",
+                        .NotEqual => "!=",
+                        .LessThan => "<",
+                        .LessThanEqual => "<=",
+                        .GreaterThan => ">",
+                        .GreaterThanEqual => ">=",
                     },
                 });
                 printExpr(writer, binary_expr.right);

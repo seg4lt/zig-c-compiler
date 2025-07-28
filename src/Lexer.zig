@@ -39,7 +39,7 @@ pub fn parseTokens(opt: LexerOptions) LexerError![]const Token {
     }
 
     if (l.print_tokens) {
-        printTokens(l.tokens, std.io.getStdOut().writer().any());
+        printTokens(l.tokens, std.io.getStdErr().writer().any());
     }
     return l.tokens.items;
 }
