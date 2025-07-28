@@ -6,7 +6,7 @@ const Options = struct {
 };
 
 pub fn emit(opt: Options) Asm.Program {
-    const stdErrorWriter = std.io.getStdOut().writer().any();
+    const stdErrorWriter = std.io.getStdErr().writer().any();
 
     var pg = Stage1.init(opt.arena).emitPg(opt.pg);
     if (opt.print_codegen) Printer.print(stdErrorWriter, pg, "Stage 1");
@@ -49,7 +49,6 @@ const Stage1 = struct {
     }
 
     fn emitInst(s: Self, inst: Tac.Instruction, instructions: *Asm.Instructions) void {
-        _ = s;
         switch (inst) {
             .Return => |ret| {
                 const src = valToOperand(ret);
@@ -59,17 +58,55 @@ const Stage1 = struct {
                 instructions.append(.ret()) catch unreachable;
             },
             .Unary => |unary| {
-                const src = valToOperand(unary.src);
-                const dst = valToOperand(unary.dst);
-                instructions.append(.mov(src, dst)) catch unreachable;
-                const operator: Asm.UnaryOperator = switch (unary.operator) {
-                    .Negate => .neg,
-                    .BitNot => .bit_not,
-                };
-                instructions.append(.unary(operator, dst)) catch unreachable;
+                if (unary.operator == .Not) {
+                    const zero: Asm.Operand = .imm(0);
+                    const src = valToOperand(unary.src);
+                    const dst = valToOperand(unary.dst);
+                    instructions.append(.mov(zero, dst)) catch unreachable;
+                    instructions.append(.cmp(zero, src)) catch unreachable;
+                    instructions.append(.setCC(.EqualEqual, dst)) catch unreachable;
+                } else {
+                    const src = valToOperand(unary.src);
+                    const dst = valToOperand(unary.dst);
+                    instructions.append(.mov(src, dst)) catch unreachable;
+                    const operator: Asm.UnaryOperator = switch (unary.operator) {
+                        .Negate => .neg,
+                        .BitNot => .bit_not,
+                        .Not => @panic("** Compiler Bug ** Unreachable path: expected negate or bit_not unary operator"),
+                    };
+                    instructions.append(.unary(operator, dst)) catch unreachable;
+                }
             },
             .Binary => |binary| {
                 switch (binary.operator) {
+                    .EqualEqual, .GreaterThan, .GreaterThanEqual, .LessThan, .LessThanEqual, .NotEqual => {
+                        const dst = valToOperand(binary.dst);
+                        instructions.append(.mov(.imm(0), dst)) catch unreachable;
+
+                        const src2 = valToOperand(binary.right);
+                        switch (binary.left) {
+                            .Const => {
+                                const src1 = valToOperand(binary.left);
+                                const reg: Asm.Operand = .register(.r11, .dword);
+                                instructions.append(.mov(src1, reg)) catch unreachable;
+                                instructions.append(.cmp(src2, reg)) catch unreachable;
+                            },
+                            .Var => {
+                                const src1 = valToOperand(binary.left);
+                                instructions.append(.cmp(src2, src1)) catch unreachable;
+                            },
+                        }
+                        const condition_code: Asm.ConditionCode = switch (binary.operator) {
+                            .EqualEqual => .EqualEqual,
+                            .GreaterThan => .GreaterThan,
+                            .GreaterThanEqual => .GreaterThanEqual,
+                            .LessThan => .LessThan,
+                            .LessThanEqual => .LessThanEqual,
+                            .NotEqual => .NotEqual,
+                            else => @panic("** Compiler Bug ** Unreachable path: expected comparison operator"),
+                        };
+                        instructions.append(.setCC(condition_code, dst)) catch unreachable;
+                    },
                     .LeftShift, .RightShift, .BitAnd, .BitOr, .BitXor, .Add, .Subtract, .Multiply => {
                         const left = valToOperand(binary.left);
                         const dst = valToOperand(binary.dst);
@@ -108,6 +145,33 @@ const Stage1 = struct {
                         instructions.append(.mov(final_mov_src, final_mov_dst)) catch unreachable;
                     },
                 }
+            },
+            .Copy => |copy| {
+                const src = valToOperand(copy.src);
+                const dst = valToOperand(copy.dst);
+                instructions.append(.mov(src, dst)) catch unreachable;
+            },
+            .Jump => |jmp| {
+                const label = std.fmt.allocPrint(s.arena, "{s}", .{jmp}) catch unreachable;
+                instructions.append(.jmp(label)) catch unreachable;
+            },
+            .JumpIfZero => |jmp| {
+                const condition = valToOperand(jmp.condition);
+                const zero: Asm.Operand = .imm(0);
+                const label = std.fmt.allocPrint(s.arena, "{s}", .{jmp.label}) catch unreachable;
+                instructions.append(.cmp(zero, condition)) catch unreachable;
+                instructions.append(.jmpCC(.EqualEqual, label)) catch unreachable;
+            },
+            .JumpIfNotZero => |jmp| {
+                const condition = valToOperand(jmp.condition);
+                const zero: Asm.Operand = .imm(0);
+                const label = std.fmt.allocPrint(s.arena, "{s}", .{jmp.label}) catch unreachable;
+                instructions.append(.cmp(zero, condition)) catch unreachable;
+                instructions.append(.jmpCC(.NotEqual, label)) catch unreachable;
+            },
+            .Label => |label| {
+                const owned_label = std.fmt.allocPrint(s.arena, "{s}", .{label}) catch unreachable;
+                instructions.append(.label(owned_label)) catch unreachable;
             },
         }
     }
@@ -160,7 +224,14 @@ const Stage2 = struct {
             .IDiv => |*operand| {
                 operand.* = s.mapOperandToStack(operand.*);
             },
-            .Cdq, .AllocateStack, .Ret => {}, // noop
+            .Cmp => |*cmp| {
+                cmp.op1 = s.mapOperandToStack(cmp.op1);
+                cmp.op2 = s.mapOperandToStack(cmp.op2);
+            },
+            .SetCC => |*set_cc| {
+                set_cc.dst = s.mapOperandToStack(set_cc.dst);
+            },
+            .Jmp, .JmpCC, .Label, .Cdq, .AllocateStack, .Ret => {}, // noop
         }
     }
     fn mapOperandToStack(s: @This(), operand: Asm.Operand) Asm.Operand {
@@ -240,7 +311,28 @@ const Stage3 = struct {
                         else => instructions.append(inst) catch unreachable,
                     }
                 },
-                .Cdq, .Unary, .AllocateStack, .Ret => instructions.append(inst) catch unreachable,
+                .Cmp => |cmp| {
+                    if (cmp.op1 == .Stack and cmp.op2 == .Stack) {
+                        const reg: Asm.Operand = .register(.r10, .dword);
+                        instructions.append(.mov(cmp.op1, reg)) catch unreachable;
+                        instructions.append(.cmp(reg, cmp.op2)) catch unreachable;
+                    } else if (cmp.op2 == .Imm) {
+                        const reg: Asm.Operand = .register(.r11, .dword);
+                        instructions.append(.mov(cmp.op2, reg)) catch unreachable;
+                        instructions.append(.cmp(cmp.op1, reg)) catch unreachable;
+                    } else {
+                        instructions.append(inst) catch unreachable;
+                    }
+                },
+                .Jmp,
+                .JmpCC,
+                .Label,
+                .SetCC,
+                .Cdq,
+                .Unary,
+                .AllocateStack,
+                .Ret,
+                => instructions.append(inst) catch unreachable,
             }
         }
         return .{ .name = fn_defn.name, .instructions = instructions, .stack_size = aligned_stack_size };
@@ -261,10 +353,35 @@ pub const Asm = struct {
         Mov: struct { src: Operand, dst: Operand },
         Unary: struct { operator: UnaryOperator, operand: Operand },
         Binary: struct { operator: BinaryOperator, operand: Operand, dst: Operand },
+        Cmp: struct { op1: Operand, op2: Operand },
+        Jmp: []const u8,
+        JmpCC: struct { condition_code: ConditionCode, label: []const u8 },
+        SetCC: struct { condition_code: ConditionCode, dst: Operand },
+        Label: []const u8,
         IDiv: Operand,
         Cdq,
         AllocateStack: usize,
         Ret,
+
+        pub fn cmp(op1: Operand, op2: Operand) Instruction {
+            return .{ .Cmp = .{ .op1 = op1, .op2 = op2 } };
+        }
+
+        pub fn jmp(label_name: []const u8) Instruction {
+            return .{ .Jmp = label_name };
+        }
+
+        pub fn jmpCC(condition_code: ConditionCode, label_name: []const u8) Instruction {
+            return .{ .JmpCC = .{ .condition_code = condition_code, .label = label_name } };
+        }
+
+        pub fn setCC(condition_code: ConditionCode, dst: Operand) Instruction {
+            return .{ .SetCC = .{ .condition_code = condition_code, .dst = dst } };
+        }
+
+        pub fn label(name: []const u8) Instruction {
+            return .{ .Label = name };
+        }
 
         pub fn cdq() Instruction {
             return .Cdq;
@@ -296,6 +413,16 @@ pub const Asm = struct {
             return .{ .Mov = .{ .src = src, .dst = dst } };
         }
     };
+
+    pub const ConditionCode = enum {
+        EqualEqual,
+        NotEqual,
+        LessThan,
+        LessThanEqual,
+        GreaterThan,
+        GreaterThanEqual,
+    };
+
     pub const UnaryOperator = enum {
         neg,
         bit_not,
@@ -437,20 +564,16 @@ const Printer = struct {
                 s.write("Ret");
             },
             .Unary => |unary| {
-                s.write("Unary(");
-                s.write("operator: ");
+                s.write("Unary ");
                 switch (unary.operator) {
                     .neg => s.write("neg"),
                     .bit_not => s.write("bit_not"),
                 }
                 s.write(", ");
-                s.write("operand: ");
                 s.printOperand(unary.operand);
-                s.write(")");
             },
             .Binary => |binary| {
-                s.write("Binary(");
-                s.write("operator: ");
+                s.write("Binary ");
                 switch (binary.operator) {
                     .Add => s.write("Add"),
                     .Subtract => s.write("Subtract"),
@@ -462,23 +585,43 @@ const Printer = struct {
                     .BitXor => s.write("BitXor"),
                 }
                 s.write(", ");
-                s.write("operand: ");
                 s.printOperand(binary.operand);
                 s.write(", ");
-                s.write("dst: ");
                 s.printOperand(binary.dst);
-                s.write(")");
             },
             .IDiv => |operand| {
-                s.write("IDiv(");
+                s.write("IDiv ");
                 s.printOperand(operand);
-                s.write(")");
+            },
+            .Cmp => |cmp| {
+                s.write("Cmp ");
+                s.printOperand(cmp.op1);
+                s.write(", ");
+                s.printOperand(cmp.op2);
+            },
+            .Jmp => |jmp| {
+                s.write("Jmp ");
+                s.writeFmt("{s})", .{jmp});
+            },
+            .JmpCC => |jmp| {
+                s.write("JmpCC ");
+                s.writeFmt("{s}, ", .{@tagName(jmp.condition_code)});
+                s.writeFmt("{s})", .{jmp.label});
+            },
+            .SetCC => |setcc| {
+                s.write("SetCC ");
+                s.writeFmt("{s}, ", .{@tagName(setcc.condition_code)});
+                s.printOperand(setcc.dst);
+            },
+            .Label => |label| {
+                s.write("Label ");
+                s.writeFmt("{s})", .{label});
             },
             .Cdq => {
                 s.write("Cdq");
             },
             .AllocateStack => |size| {
-                s.writeFmt("AllocateStack({d})", .{size});
+                s.writeFmt("AllocateStack {d}", .{size});
             },
         }
         s.write("\n");
