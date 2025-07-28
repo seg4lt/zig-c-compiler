@@ -1,5 +1,6 @@
 arena: Allocator,
 var_count: usize = 0,
+label_count: usize = 0,
 
 const Self = @This();
 
@@ -50,35 +51,103 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
             const operator: Tac.UnaryOperator = switch (unary.operator) {
                 .Negate => .Negate,
                 .BitNot => .BitNot,
+                .Not => .Not,
             };
             instructions.append(.unary(operator, src, dst)) catch unreachable;
             return dst;
         },
         .Binary => |binary| {
-            const left = s.genExpr(binary.left, instructions);
-            const right = s.genExpr(binary.right, instructions);
-            const dst = s.makeVar();
-            const op = switch (binary.operator) {
-                .Add => Tac.BinaryOperator.Add,
-                .Subtract => Tac.BinaryOperator.Subtract,
-                .Multiply => Tac.BinaryOperator.Multiply,
-                .Divide => Tac.BinaryOperator.Divide,
-                .Mod => Tac.BinaryOperator.Mod,
-                .BitAnd => Tac.BinaryOperator.BitAnd,
-                .BitOr => Tac.BinaryOperator.BitOr,
-                .BitXor => Tac.BinaryOperator.BitXor,
-                .LeftShift => Tac.BinaryOperator.LeftShift,
-                .RightShift => Tac.BinaryOperator.RightShift,
-            };
-            instructions.append(.binary(op, left, right, dst)) catch unreachable;
-            return dst;
+            switch (binary.operator) {
+                .And => {
+                    // @todo improvement
+                    // All labels on this phase can use same index, so we can cross reference all labels in assembly
+                    const false_label = s.makeLabel("and_condition_false");
+                    const src1 = s.genExpr(binary.left, instructions);
+                    // short-circuit evaluation for 'and'
+                    instructions.append(.jumpIfZero(src1, false_label.Label)) catch unreachable;
+                    const src2 = s.genExpr(binary.right, instructions);
+                    instructions.append(.jumpIfZero(src2, false_label.Label)) catch unreachable;
+
+                    // both conditions are true, dst = 1
+                    const result = s.makeVar();
+                    const one: Tac.Val = .constant(1);
+                    instructions.append(.copy(one, result)) catch unreachable;
+                    const end_label = s.makeLabel("and_condition_end");
+                    instructions.append(.jump(end_label.Label)) catch unreachable;
+
+                    // if condition is false
+                    instructions.append(false_label) catch unreachable;
+                    const zero: Tac.Val = .constant(0);
+                    instructions.append(.copy(zero, result)) catch unreachable;
+
+                    // end
+                    instructions.append(end_label) catch unreachable;
+                    return result;
+                },
+                .Or => {
+                    // @todo improvement
+                    // all lables to use same label index
+                    const true_label = s.makeLabel("or_condition_true");
+
+                    const src1 = s.genExpr(binary.left, instructions);
+                    instructions.append(.jumpIfNotZero(src1, true_label.Label)) catch unreachable;
+
+                    const src2 = s.genExpr(binary.right, instructions);
+                    instructions.append(.jumpIfNotZero(src2, true_label.Label)) catch unreachable;
+
+                    const result = s.makeVar();
+                    const zero: Tac.Val = .constant(0);
+                    instructions.append(.copy(zero, result)) catch unreachable;
+
+                    const end_label = s.makeLabel("or_condition_end");
+                    instructions.append(.jump(end_label.Label)) catch unreachable;
+                    instructions.append(true_label) catch unreachable;
+
+                    const one: Tac.Val = .constant(1);
+                    instructions.append(.copy(one, result)) catch unreachable;
+                    instructions.append(end_label) catch unreachable;
+
+                    return result;
+                },
+                else => {
+                    const left = s.genExpr(binary.left, instructions);
+                    const right = s.genExpr(binary.right, instructions);
+                    const dst = s.makeVar();
+                    const op = switch (binary.operator) {
+                        .Add => Tac.BinaryOperator.Add,
+                        .Subtract => Tac.BinaryOperator.Subtract,
+                        .Multiply => Tac.BinaryOperator.Multiply,
+                        .Divide => Tac.BinaryOperator.Divide,
+                        .Mod => Tac.BinaryOperator.Mod,
+                        .BitAnd => Tac.BinaryOperator.BitAnd,
+                        .BitOr => Tac.BinaryOperator.BitOr,
+                        .BitXor => Tac.BinaryOperator.BitXor,
+                        .LeftShift => Tac.BinaryOperator.LeftShift,
+                        .RightShift => Tac.BinaryOperator.RightShift,
+                        .EqualEqual => Tac.BinaryOperator.EqualEqual,
+                        .NotEqual => Tac.BinaryOperator.NotEqual,
+                        .LessThan => Tac.BinaryOperator.LessThan,
+                        .LessThanEqual => Tac.BinaryOperator.LessThanEqual,
+                        .GreaterThan => Tac.BinaryOperator.GreaterThan,
+                        .GreaterThanEqual => Tac.BinaryOperator.GreaterThanEqual,
+                        .And, .Or => @panic("** Compiler Bug ** - 'and' and 'or' should be handled differently!!!"),
+                    };
+                    instructions.append(.binary(op, left, right, dst)) catch unreachable;
+                    return dst;
+                },
+            }
         },
     };
 }
 pub fn makeVar(s: *Self) Tac.Val {
+    defer s.var_count += 1;
     const var_name = std.fmt.allocPrint(s.arena, "tmp.{d}", .{s.var_count}) catch unreachable;
-    s.var_count += 1;
     return .variable(var_name);
+}
+pub fn makeLabel(s: *Self, comptime label: []const u8) Tac.Instruction {
+    defer s.label_count += 1;
+    const label_name = std.fmt.allocPrint(s.arena, "L_{s}_{d}", .{ label, s.label_count }) catch unreachable;
+    return .label(label_name);
 }
 
 pub const Tac = struct {
@@ -91,17 +160,33 @@ pub const Tac = struct {
     };
     pub const Instruction = union(enum) {
         Return: Val,
-        Unary: struct {
-            operator: UnaryOperator,
-            src: Val,
-            dst: Val,
-        },
-        Binary: struct {
-            operator: BinaryOperator,
-            left: Val,
-            right: Val,
-            dst: Val,
-        },
+        Unary: struct { operator: UnaryOperator, src: Val, dst: Val },
+        Binary: struct { operator: BinaryOperator, left: Val, right: Val, dst: Val },
+        Copy: struct { src: Val, dst: Val },
+        Jump: []const u8,
+        JumpIfZero: struct { condition: Val, label: []const u8 },
+        JumpIfNotZero: struct { condition: Val, label: []const u8 },
+        Label: []const u8,
+
+        pub fn label(name: []const u8) Instruction {
+            return .{ .Label = name };
+        }
+
+        pub fn jumpIfNotZero(condition: Val, label_name: []const u8) Instruction {
+            return .{ .JumpIfNotZero = .{ .condition = condition, .label = label_name } };
+        }
+
+        pub fn jumpIfZero(condition: Val, label_name: []const u8) Instruction {
+            return .{ .JumpIfZero = .{ .condition = condition, .label = label_name } };
+        }
+
+        pub fn jump(label_name: []const u8) Instruction {
+            return .{ .Jump = label_name };
+        }
+
+        pub fn copy(src: Val, dst: Val) Instruction {
+            return .{ .Copy = .{ .src = src, .dst = dst } };
+        }
 
         pub fn binary(operator: BinaryOperator, left: Val, right: Val, dst: Val) Instruction {
             return .{
@@ -143,6 +228,7 @@ pub const Tac = struct {
     pub const UnaryOperator = enum {
         Negate,
         BitNot,
+        Not,
     };
     pub const BinaryOperator = enum {
         Add,
@@ -155,6 +241,12 @@ pub const Tac = struct {
         BitAnd,
         BitOr,
         BitXor,
+        EqualEqual,
+        NotEqual,
+        LessThan,
+        LessThanEqual,
+        GreaterThan,
+        GreaterThanEqual,
     };
 };
 
@@ -191,6 +283,7 @@ const TackyIRPrinter = struct {
                 switch (unary.operator) {
                     .Negate => s.write("Negate"),
                     .BitNot => s.write("BitNot"),
+                    .Not => s.write("Not"),
                 }
                 s.write(", ");
                 s.write("src: ");
@@ -214,6 +307,12 @@ const TackyIRPrinter = struct {
                     .BitAnd => s.write("BitAnd"),
                     .BitOr => s.write("BitOr"),
                     .BitXor => s.write("BitXor"),
+                    .EqualEqual => s.write("EqualEqual"),
+                    .NotEqual => s.write("NotEqual"),
+                    .LessThan => s.write("LessThan"),
+                    .LessThanEqual => s.write("LessThanEqual"),
+                    .GreaterThan => s.write("GreaterThan"),
+                    .GreaterThanEqual => s.write("GreaterThanEqual"),
                 }
                 s.write(", ");
 
@@ -226,6 +325,40 @@ const TackyIRPrinter = struct {
                 s.write(", right: ");
                 s.printVal(binary.right);
 
+                s.write(")");
+            },
+            .Copy => |copy| {
+                s.write("Copy(");
+                s.write("src: ");
+                s.printVal(copy.src);
+                s.write(", dst: ");
+                s.printVal(copy.dst);
+                s.write(")");
+            },
+            .Jump => |label| {
+                s.write("Jump(");
+                s.write(label);
+                s.write(")");
+            },
+            .JumpIfZero => |jump| {
+                s.write("JumpIfZero(");
+                s.write("condition: ");
+                s.printVal(jump.condition);
+                s.write(", label: ");
+                s.write(jump.label);
+                s.write(")");
+            },
+            .JumpIfNotZero => |jump| {
+                s.write("JumpIfNotZero(");
+                s.write("condition: ");
+                s.printVal(jump.condition);
+                s.write(", label: ");
+                s.write(jump.label);
+                s.write(")");
+            },
+            .Label => |label| {
+                s.write("Label(");
+                s.write(label);
                 s.write(")");
             },
         }
