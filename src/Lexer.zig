@@ -101,7 +101,7 @@ fn scan(s: *Self) void {
             '>' => {
                 if (s.peek() == '>') {
                     _ = s.consumeAny();
-                    s.addToken(.RightSift);
+                    s.addToken(.RightShift);
                     continue;
                 }
                 @panic("not implemented");
@@ -109,7 +109,7 @@ fn scan(s: *Self) void {
             '<' => {
                 if (s.peek() == '<') {
                     _ = s.consumeAny();
-                    s.addToken(.LeftShit);
+                    s.addToken(.LeftShift);
                     continue;
                 }
                 @panic("not implemented");
@@ -254,8 +254,8 @@ pub const TokenType = enum {
     BitAnd,
     BitOr,
     BitXor,
-    LeftShit,
-    RightSift,
+    LeftShift,
+    RightShift,
     Plus,
     Minus,
     Multiply,

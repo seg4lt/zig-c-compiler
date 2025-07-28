@@ -148,7 +148,7 @@ fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
             );
         };
         const continue_expr_parse = isBinaryOperator(next_token.type) and try p.getPrecedence(next_token.type) >= min_prec;
-        
+
         if (!continue_expr_parse) {
             break;
         }
@@ -164,7 +164,18 @@ fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
 
 fn isBinaryOperator(token_type: TokenType) bool {
     return switch (token_type) {
-        .Plus, .Minus, .Multiply, .Divide, .Mod => true,
+        .Plus,
+        .Minus,
+        .Multiply,
+        .Divide,
+        .Mod,
+        .BitNot,
+        .BitAnd,
+        .BitOr,
+        .BitXor,
+        .LeftShift,
+        .RightShift,
+        => true,
         else => false,
     };
 }
@@ -176,6 +187,11 @@ fn parseBinaryOperator(p: Self, token_type: TokenType) ParseError!Ast.BinaryOper
         .Multiply => .Multiply,
         .Divide => .Divide,
         .Mod => .Mod,
+        .BitAnd => .BitAnd,
+        .BitOr => .BitOr,
+        .BitXor => .BitXor,
+        .LeftShift => .LeftShift,
+        .RightShift => .RightShift,
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseBinaryOperator called on non binary token", .{}),
     };
 }
@@ -185,6 +201,10 @@ fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
         .BitNot => 70,
         .Divide, .Multiply, .Mod => 50,
         .Minus, .Plus => 45,
+        .LeftShift, .RightShift => 40,
+        .BitAnd => 25,
+        .BitOr => 24,
+        .BitXor => 23,
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** precedence level asked for something that doesn't support precendence", .{}),
     };
 }
@@ -192,7 +212,7 @@ fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
 fn parseUnaryOperator(p: Self, token_type: TokenType) ParseError!Ast.UnaryOperator {
     return switch (token_type) {
         .Minus => .Negate,
-        .BitNot => .Complement,
+        .BitNot => .BitNot,
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseUnaryOperator called on non unary token", .{}),
     };
 }
@@ -335,7 +355,7 @@ pub const Ast = struct {
     };
     const UnaryOperator = enum {
         Negate,
-        Complement,
+        BitNot,
     };
     const BinaryOperator = enum {
         Add,
@@ -343,6 +363,11 @@ pub const Ast = struct {
         Multiply,
         Divide,
         Mod,
+        BitAnd,
+        BitOr,
+        BitXor,
+        LeftShift,
+        RightShift,
     };
 
     const SourceLocation = struct {
@@ -395,7 +420,7 @@ const AstPrinter = struct {
                 writeFmt(writer, "{s}", .{
                     switch (unary_expr.operator) {
                         .Negate => "-",
-                        .Complement => "~",
+                        .BitNot => "~",
                     },
                 });
                 printExpr(writer, unary_expr.expr);
@@ -411,6 +436,11 @@ const AstPrinter = struct {
                         .Multiply => "*",
                         .Divide => "/",
                         .Mod => "%",
+                        .BitAnd => "&",
+                        .BitOr => "|",
+                        .BitXor => "^",
+                        .LeftShift => "<<",
+                        .RightShift => ">>",
                     },
                 });
                 printExpr(writer, binary_expr.right);
