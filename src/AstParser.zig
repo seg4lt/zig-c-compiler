@@ -40,17 +40,19 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
         };
     }
 
-    if (opt.print_ast) {
-        var buffer = ArrayList(u8).init(self.arena);
-        var stdErr = std.io.getStdErr();
-        AstPrinter.print(buffer.writer().any(), pg);
-        // all of this to check if I have extra space.. Ouch...
-        for (buffer.items) |c| {
-            _ = (if (c == ' ') stdErr.write("﹍") else stdErr.write(&[_]u8{c})) catch unreachable;
-        }
-    }
+    if (opt.print_ast) print(self.arena, pg);
 
     return pg;
+}
+
+fn print(arena: Allocator, program: *const Ast.Program) void {
+    var buffer = ArrayList(u8).init(arena);
+    var stdErr = std.io.getStdErr().writer();
+    AstPrinter.print(buffer.writer().any(), program);
+    // all of this to check if I have extra space.. Ouch...
+    for (buffer.items) |c| {
+        _ = (if (c == ' ') stdErr.write("﹍") else stdErr.write(&[_]u8{c})) catch unreachable;
+    }
 }
 
 fn parseProgram(p: *Self) ParseError!*Ast.Program {
@@ -194,10 +196,11 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             return .unaryExpr(p.arena, operator, inner_expr, op_token.line, op_token.start);
         },
         .LParen => {
-            _ = try p.consume(.LParen);
+            const group_token = try p.consume(.LParen);
             const inner_expr = try p.parseExpr(0);
+            const group_expr: *Ast.Expr = .groupExpr(p.arena, inner_expr, group_token.line, group_token.start);
             _ = try p.consume(.RParen);
-            return inner_expr;
+            return group_expr;
         },
         .Ident => {
             const ident_token = try p.consumeAny();
@@ -228,11 +231,18 @@ fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
             break;
         }
 
-        const op_token = try p.consumeAny();
-        const op = try p.parseBinaryOperator(op_token.type);
-        const right = try p.parseExpr(try p.getPrecedence(next_token.type) + 1);
-        const binary: *Ast.Expr = .binaryExpr(p.arena, op, left, right, op_token.line, op_token.start);
-        left = binary;
+        if (next_token.type == .Assign) {
+            const assignment_token = try p.consume(.Assign);
+            const right = try p.parseExpr(try p.getPrecedence(assignment_token.type));
+            const assignment: *Ast.Expr = .assignmentExpr(p.arena, right, left, assignment_token.line, assignment_token.start);
+            left = assignment;
+        } else {
+            const op_token = try p.consumeAny();
+            const op = try p.parseBinaryOperator(op_token.type);
+            const right = try p.parseExpr(try p.getPrecedence(next_token.type) + 1);
+            const binary: *Ast.Expr = .binaryExpr(p.arena, op, left, right, op_token.line, op_token.start);
+            left = binary;
+        }
     }
     return left;
 }
@@ -280,7 +290,6 @@ fn isBinaryOperator(token_type: TokenType) bool {
 fn parseBinaryOperator(p: Self, token_type: TokenType) ParseError!Ast.BinaryOperator {
     return switch (token_type) {
         .And => .And,
-        .Assign => .Assign,
         .BitAnd => .BitAnd,
         .BitOr => .BitOr,
         .BitXor => .BitXor,
@@ -502,6 +511,18 @@ pub const Ast = struct {
         Unary: struct { operator: UnaryOperator, expr: *Expr, loc: SourceLocation },
         Binary: struct { operator: BinaryOperator, left: *Expr, right: *Expr, loc: SourceLocation },
         Assignment: struct { src: *Expr, dst: *Expr, loc: SourceLocation },
+        Group: struct { expr: *Expr, loc: SourceLocation },
+
+        pub fn groupExpr(allocator: Allocator, expr: *Expr, line: usize, start: usize) *Expr {
+            const group_expr = allocator.create(Expr) catch unreachable;
+            group_expr.* = .{
+                .Group = .{
+                    .expr = expr,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return group_expr;
+        }
 
         pub fn assignmentExpr(allocator: Allocator, src: *Expr, dst: *Expr, line: usize, start: usize) *Expr {
             const expr = allocator.create(Expr) catch unreachable;
@@ -570,7 +591,6 @@ pub const Ast = struct {
     const BinaryOperator = enum {
         Add,
         And,
-        Assign,
         BitAnd,
         BitOr,
         BitXor,
@@ -604,7 +624,7 @@ const ParseError = error{
     InvalidIdent,
 } || CompilerError;
 
-const AstPrinter = struct {
+pub const AstPrinter = struct {
     pub fn print(writer: AnyWriter, pg: *const Ast.Program) void {
         write(writer, "-- AST --\n");
         write(writer, "program\n");
@@ -672,8 +692,14 @@ const AstPrinter = struct {
             .Var => |var_expr| {
                 writeFmt(writer, "{s}", .{var_expr.ident});
             },
+            .Group => |group_expr| {
+                write(writer, "(");
+                printExpr(writer, group_expr.expr);
+                write(writer, ")");
+            },
             .Assignment => |assignment_expr| {
                 printExpr(writer, assignment_expr.dst);
+                write(writer, " = ");
                 printExpr(writer, assignment_expr.src);
             },
             .Constant => |constant_expr| {
@@ -697,7 +723,6 @@ const AstPrinter = struct {
                 writeFmt(writer, " {s} ", .{
                     switch (binary_expr.operator) {
                         .Add => "+",
-                        .Assign => "=",
                         .Subtract => "-",
                         .Multiply => "*",
                         .Divide => "/",

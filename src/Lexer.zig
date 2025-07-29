@@ -157,7 +157,7 @@ fn scan(s: *Self) void {
             '+' => s.addToken(.Plus),
             '-' => {
                 if (s.peek() == '-') {
-                    @panic("-- is is not implemented yet");
+                    @panic("TODO: -- is is not implemented yet");
                     // _ = s.consumeAny();
                     // s.addToken("--", .MinusMinus);
                     // continue;

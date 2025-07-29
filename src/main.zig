@@ -33,6 +33,17 @@ fn runCompiler(gpa: Allocator) !void {
         .print_ast = true,
     }) else null;
 
+    if (args.flag.sema) {
+        try Sema.sema(.{
+            .program = program_ast orelse return error.OwwwMyyyGauudddAstIsNull,
+            .arena = compiler_ctx.semaArena(),
+            .scratch_arena = compiler_ctx.scratchArena(),
+            .error_reporter = compiler_ctx.error_reporter,
+            .random = compiler_ctx.random,
+            .print_ast = true,
+        });
+    }
+
     compiler_ctx.resetScratchArena();
     compiler_ctx.deinitLexerArena();
 
@@ -43,6 +54,7 @@ fn runCompiler(gpa: Allocator) !void {
     }) else null;
     compiler_ctx.resetScratchArena();
     compiler_ctx.deinitParserArena();
+    compiler_ctx.deinitSemaArena();
 
     const codegen_pg = if (args.flag.codegen) Codegen.emit(.{
         .arena = compiler_ctx.codegenArena(),
@@ -93,6 +105,7 @@ const CodeEmission = @import("CodeEmission.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
 const CompilerContext = @import("CompilerContext.zig");
+const Sema = @import("sema/Sema.zig");
 const preprocessor = compiler_driver.preprocessor;
 const assembleAndLink = compiler_driver.assembleAndLink;
 const Allocator = std.mem.Allocator;

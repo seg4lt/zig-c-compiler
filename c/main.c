@@ -1,3 +1,11 @@
+#ifdef SUPPRESS_WARNINGS
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Wconstant-logical-operand"
+#endif
+#endif
+
 int main(void) {
-    return (1 > 2) + (1 > 1);
+    int a;
+    a = 0 || 5;
+    return a;
 }

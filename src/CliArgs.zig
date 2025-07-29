@@ -6,16 +6,18 @@ const Self = @This();
 const CliFlag = packed struct(u8) {
     lex: bool = true,
     parse: bool = true,
+    sema: bool = true,
     tacky: bool = true,
     codegen: bool = true,
     assemble: bool = true,
     link: bool = true,
-    _padding: u2 = 0,
+    _padding: u1 = 0,
 
     pub const LEX = fromBits(0b1);
     pub const PARSE = fromBits(0b11);
-    pub const TACKY = fromBits(0b111);
-    pub const CODE_GEN = fromBits(0b1111);
+    pub const SEMA = fromBits(0b111);
+    pub const TACKY = fromBits(0b1111);
+    pub const CODE_GEN = fromBits(0b11111);
     pub const ALL = CliFlag{};
 
     pub fn fromBits(bits: u8) CliFlag {
@@ -42,6 +44,10 @@ pub fn parse() !Self {
         }
         if (std.mem.eql(u8, "--parse", arg)) {
             flag = .PARSE;
+            continue;
+        }
+        if (std.mem.eql(u8, "--sema", arg) or std.mem.eql(u8, "--validate", arg)) {
+            flag = .SEMA;
             continue;
         }
         if (std.mem.eql(u8, "--tacky", arg)) {

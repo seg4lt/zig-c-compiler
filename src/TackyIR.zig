@@ -26,26 +26,72 @@ fn genPg(s: *Self, pg: *const Ast.Program) Tac.Program {
 fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.FnDefn {
     var instructions = ArrayList(Tac.Instruction).init(s.arena);
 
-    s.genStmt(fn_decl.body, &instructions);
-
+    s.genBlock(fn_decl.body, &instructions);
     instructions.append(.ret(.constant(0))) catch unreachable;
+
     return .{
-        .name = fn_decl.name,
+        .name = std.fmt.allocPrint(s.arena, "{s}", .{fn_decl.name}) catch unreachable,
         .body = instructions,
     };
 }
-pub fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruction)) void {
+
+fn genBlock(s: *Self, block: *const Ast.Block, instructions: *ArrayList(Tac.Instruction)) void {
+    var block_item = block.block_item;
+    s.genBlockItem(&block_item, instructions);
+}
+
+fn genBlockItem(s: *Self, block_item: *ArrayList(*Ast.BlockItem), instructions: *ArrayList(Tac.Instruction)) void {
+    for (block_item.*.items) |item| {
+        switch (item.*) {
+            .Stmt => |stmt| s.genStmt(stmt, instructions),
+            .Decl => |decl| s.genDecl(decl, instructions),
+        }
+    }
+}
+fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction)) void {
+    switch (decl.*) {
+        .Var => |var_decl| {
+            if (var_decl.init) |initializer| {
+                const result = s.genExpr(initializer, instructions);
+                const dst: Tac.Val = .variable(std.fmt.allocPrint(s.arena, "{s}", .{var_decl.ident}) catch unreachable);
+                instructions.append(.copy(result, dst)) catch unreachable;
+            }
+            // variable with just declaration can be ignored, it has served its purpose
+        },
+        .Fn => |fn_decl| {
+            _ = fn_decl;
+            @panic("TODO: not implemented");
+            // if (fn_decl.body != null) {
+            //     @panic("** Compiler Bug ** fn declaration should not have body");
+            // }
+        },
+    }
+}
+
+fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruction)) void {
     switch (stmt.*) {
-        .Expr, .Null => @panic("not implemented"),
+        .Expr => |expr_stmt| {
+            _ = s.genExpr(expr_stmt.expr, instructions);
+        },
         .Return => |ret| {
             const ret_val = s.genExpr(ret.expr, instructions);
             instructions.append(.ret(ret_val)) catch unreachable;
         },
+        .Null => {}, //noop
     }
 }
 pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
-        .Var, .Assignment => @panic("not implemented"),
+        .Var => |variable| .variable(std.fmt.allocPrint(s.arena, "{s}", .{variable.ident}) catch unreachable),
+        .Assignment => |assignment| {
+            const result = s.genExpr(assignment.src, instructions);
+            if (assignment.dst.* != .Var) {
+                @panic("** Compiler Bug ** assignment dst has to be a var. Sema phase should have caught this!!!");
+            }
+            const dst: Tac.Val = .variable(std.fmt.allocPrint(s.arena, "{s}", .{assignment.dst.Var.ident}) catch unreachable);
+            instructions.append(.copy(result, dst)) catch unreachable;
+            return dst;
+        },
         .Constant => |constant| .constant(constant.value),
         .Unary => |unary| {
             const src = s.genExpr(unary.expr, instructions);
@@ -139,6 +185,7 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
                 },
             }
         },
+        .Group => |group| s.genExpr(group.expr, instructions),
     };
 }
 pub fn makeVar(s: *Self) Tac.Val {

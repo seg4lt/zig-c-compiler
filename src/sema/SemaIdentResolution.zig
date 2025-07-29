@@ -1,0 +1,209 @@
+arena: Allocator,
+scratch_arena: Allocator,
+error_reporter: *ErrorReporter,
+random: std.Random,
+
+const Self = @This();
+
+pub fn resolve(opt: SemaOptions) SemaError!void {
+    var self = Self{
+        .arena = opt.arena,
+        .scratch_arena = opt.scratch_arena,
+        .error_reporter = opt.error_reporter,
+        .random = opt.random,
+    };
+
+    self.resolvePg(opt.program) catch |e| {
+        self.error_reporter.printError(std.io.getStdErr().writer().any());
+        return e;
+    };
+}
+
+fn resolvePg(s: Self, pg: *Ast.Program) SemaError!void {
+    var new_scope = ScopeIdents.init(s.arena);
+
+    const can_have_body = true;
+    try s.resolveFnDecl(pg.@"fn", &new_scope, can_have_body);
+}
+
+fn semaError(p: Self, e: SemaError, line: usize, start: usize, comptime fmt: []const u8, args: anytype) SemaError!noreturn {
+    p.error_reporter.addError(line, start, fmt, args);
+    return e;
+}
+
+fn resolveFnDecl(s: Self, fn_decl: *Ast.FnDecl, scope: *ScopeIdents, can_have_body: bool) SemaError!void {
+    _ = can_have_body;
+    if (scope.get(fn_decl.name)) |saved_name| {
+        if (saved_name.type == .Fn and saved_name.has_body) {
+            try s.semaError(
+                SemaError.DuplicateIdentifier,
+                fn_decl.loc.line,
+                fn_decl.loc.start,
+                "duplicate function declaration `{s}`\n",
+                .{fn_decl.name},
+            );
+        }
+        if (saved_name.type == .Var and saved_name.from_current_scope) {
+            try s.semaError(
+                SemaError.DuplicateIdentifier,
+                fn_decl.loc.line,
+                fn_decl.loc.start,
+                "function name conflicts with variable name `{s}`\n",
+                .{fn_decl.name},
+            );
+        }
+    }
+    const ident = Ident{
+        .from_current_scope = true,
+        .type = .Fn,
+        .external_linkage = true,
+        .name = fn_decl.name,
+        .has_body = true,
+    };
+    scope.put(fn_decl.name, ident) catch unreachable;
+    try s.resolveBlock(fn_decl.body, scope);
+}
+
+fn resolveBlock(s: Self, block: *Ast.Block, scope: *ScopeIdents) SemaError!void {
+    try s.resolveBlockItem(&block.*.block_item, scope);
+}
+
+fn resolveBlockItem(s: Self, block_items: *ArrayList(*Ast.BlockItem), scope: *ScopeIdents) SemaError!void {
+    for (block_items.*.items) |item| {
+        try switch (item.*) {
+            .Decl => |decl| s.resolveDecl(decl, scope),
+            .Stmt => |stmt| s.resolveStmt(stmt, scope),
+        };
+    }
+}
+
+fn resolveDecl(s: Self, decl: *Ast.Decl, scope: *ScopeIdents) SemaError!void {
+    switch (decl.*) {
+        .Fn => |fn_decl| try s.resolveFnDecl(fn_decl, scope, true),
+        .Var => |var_decl| {
+            if (scope.get(var_decl.ident)) |entry| {
+                if (entry.from_current_scope) {
+                    if (entry.type == .Var) {
+                        try s.semaError(
+                            SemaError.DuplicateIdentifier,
+                            var_decl.loc.line,
+                            var_decl.loc.start,
+                            "duplicate variable declaration `{s}`\n",
+                            .{var_decl.ident},
+                        );
+                    }
+                    if (entry.type == .Fn and entry.external_linkage) {
+                        try s.semaError(
+                            SemaError.DuplicateIdentifier,
+                            var_decl.loc.line,
+                            var_decl.loc.start,
+                            "variable name conflicts with function name `{s}`\n",
+                            .{var_decl.ident},
+                        );
+                    }
+                }
+            }
+
+            const new_ident = makeVar(s.arena, s.random, var_decl.ident);
+            const ident = Ident{
+                .from_current_scope = true,
+                .external_linkage = false,
+                .name = new_ident,
+                .type = .Var,
+                .has_body = false,
+            };
+            scope.put(var_decl.ident, ident) catch unreachable;
+
+            if (var_decl.init) |initializer| try s.resolveExpr(initializer, scope);
+            var_decl.ident = new_ident;
+        },
+    }
+}
+
+fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
+    try switch (stmt.*) {
+        .Return => |return_stmt| s.resolveExpr(return_stmt.expr, scope),
+        .Expr => |expr_stmt| s.resolveExpr(expr_stmt.expr, scope),
+        .Null => {}, // noop
+    };
+}
+
+fn resolveExpr(s: Self, expr: *Ast.Expr, scope: *ScopeIdents) SemaError!void {
+    switch (expr.*) {
+        .Var => |*variable| {
+            const ident = scope.get(variable.ident) orelse {
+                try s.semaError(
+                    SemaError.UndeclaredVariable,
+                    variable.loc.line,
+                    variable.loc.start,
+                    "undeclared variable `{s}`\n",
+                    .{variable.ident},
+                );
+            };
+            variable.*.ident = ident.name;
+        },
+        .Unary => |unary| try s.resolveExpr(unary.expr, scope),
+        .Binary => |binary| {
+            try s.resolveExpr(binary.left, scope);
+            try s.resolveExpr(binary.right, scope);
+        },
+        .Assignment => |assignment| {
+            const dst = switch (assignment.dst.*) {
+                .Group => recurseGetGroupInnerExpr(assignment.dst),
+                else => assignment.dst,
+            };
+
+            if (dst.* != .Var) {
+                try s.semaError(
+                    SemaError.InvalidLValue,
+                    assignment.loc.line,
+                    // to much work to get actual start, maybe should have been a normal c union type
+                    // - 2 so it goes back two step from `=` symbol, maybe this is good enough
+                    assignment.loc.start - 2,
+                    "expected variable (invalid lvalue) found: `{any}`\n",
+                    .{dst.*},
+                );
+            }
+            try s.resolveExpr(dst, scope);
+            try s.resolveExpr(assignment.src, scope);
+        },
+        .Group => |grp| try s.resolveExpr(grp.expr, scope),
+        .Constant => {}, // noop
+    }
+}
+
+fn recurseGetGroupInnerExpr(expr: *Ast.Expr) *Ast.Expr {
+    if (expr.* != .Group) return expr;
+    return recurseGetGroupInnerExpr(expr.Group.expr);
+}
+
+const ScopeIdents = StringHashMap(Ident);
+
+const Ident = struct {
+    from_current_scope: bool,
+    type: IdentType,
+    external_linkage: bool,
+    name: []const u8,
+    has_body: bool,
+};
+
+const IdentType = enum { Fn, Var };
+
+fn createNewScope(scope: *ScopeIdents) ScopeIdents {
+    const new_scope = scope.clone() catch unreachable;
+    var it = new_scope.iterator();
+    while (it.next()) |entry| {
+        entry.value_ptr.*.from_current_scope = false;
+    }
+    return new_scope;
+}
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const StringHashMap = std.StringHashMap;
+const ArrayList = std.ArrayList;
+const ErrorReporter = @import("../ErrorReporter.zig");
+const SemaError = @import("sema_common.zig").SemaError;
+const SemaOptions = @import("sema_common.zig").SemaOptions;
+const makeVar = @import("sema_common.zig").makeVar;
+const Ast = @import("../AstParser.zig").Ast;

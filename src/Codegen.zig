@@ -42,7 +42,7 @@ const Stage1 = struct {
             s.emitInst(inst, &instructions);
         }
         return .{
-            .name = fn_defn.name,
+            .name = std.fmt.allocPrint(s.arena, "{s}", .{fn_defn.name}) catch unreachable,
             .instructions = instructions,
             .stack_size = 0,
         };
@@ -51,7 +51,7 @@ const Stage1 = struct {
     fn emitInst(s: Self, inst: Tac.Instruction, instructions: *Asm.Instructions) void {
         switch (inst) {
             .Return => |ret| {
-                const src = valToOperand(ret);
+                const src = valToOperand(s.arena, ret);
                 const dst = Asm.Operand.register(.ax, .dword);
 
                 instructions.append(.mov(src, dst)) catch unreachable;
@@ -60,14 +60,14 @@ const Stage1 = struct {
             .Unary => |unary| {
                 if (unary.operator == .Not) {
                     const zero: Asm.Operand = .imm(0);
-                    const src = valToOperand(unary.src);
-                    const dst = valToOperand(unary.dst);
+                    const src = valToOperand(s.arena, unary.src);
+                    const dst = valToOperand(s.arena, unary.dst);
                     instructions.append(.mov(zero, dst)) catch unreachable;
                     instructions.append(.cmp(zero, src)) catch unreachable;
                     instructions.append(.setCC(.EqualEqual, dst)) catch unreachable;
                 } else {
-                    const src = valToOperand(unary.src);
-                    const dst = valToOperand(unary.dst);
+                    const src = valToOperand(s.arena, unary.src);
+                    const dst = valToOperand(s.arena, unary.dst);
                     instructions.append(.mov(src, dst)) catch unreachable;
                     const operator: Asm.UnaryOperator = switch (unary.operator) {
                         .Negate => .Neg,
@@ -80,19 +80,19 @@ const Stage1 = struct {
             .Binary => |binary| {
                 switch (binary.operator) {
                     .EqualEqual, .GreaterThan, .GreaterThanEqual, .LessThan, .LessThanEqual, .NotEqual => {
-                        const dst = valToOperand(binary.dst);
+                        const dst = valToOperand(s.arena, binary.dst);
                         instructions.append(.mov(.imm(0), dst)) catch unreachable;
 
-                        const src2 = valToOperand(binary.right);
+                        const src2 = valToOperand(s.arena, binary.right);
                         switch (binary.left) {
                             .Const => {
-                                const src1 = valToOperand(binary.left);
+                                const src1 = valToOperand(s.arena, binary.left);
                                 const reg: Asm.Operand = .register(.r11, .dword);
                                 instructions.append(.mov(src1, reg)) catch unreachable;
                                 instructions.append(.cmp(src2, reg)) catch unreachable;
                             },
                             .Var => {
-                                const src1 = valToOperand(binary.left);
+                                const src1 = valToOperand(s.arena, binary.left);
                                 instructions.append(.cmp(src2, src1)) catch unreachable;
                             },
                         }
@@ -108,8 +108,8 @@ const Stage1 = struct {
                         instructions.append(.setCC(condition_code, dst)) catch unreachable;
                     },
                     .LeftShift, .RightShift, .BitAnd, .BitOr, .BitXor, .Add, .Subtract, .Multiply => {
-                        const left = valToOperand(binary.left);
-                        const dst = valToOperand(binary.dst);
+                        const left = valToOperand(s.arena, binary.left);
+                        const dst = valToOperand(s.arena, binary.dst);
                         instructions.append(.mov(left, dst)) catch unreachable;
 
                         const op = switch (binary.operator) {
@@ -123,17 +123,17 @@ const Stage1 = struct {
                             .BitXor => Asm.BinaryOperator.BitXor,
                             else => @panic("** Compiler Bug ** Unreachable path: expected add, sub or mul binary operator"),
                         };
-                        const right = valToOperand(binary.right);
+                        const right = valToOperand(s.arena, binary.right);
                         instructions.append(.binary(op, right, dst)) catch unreachable;
                     },
                     .Divide, .Mod => {
-                        const left = valToOperand(binary.left);
+                        const left = valToOperand(s.arena, binary.left);
                         const first_move_dst: Asm.Operand = .register(.ax, .dword);
                         instructions.append(.mov(left, first_move_dst)) catch unreachable;
 
                         instructions.append(.cdq()) catch unreachable;
 
-                        const right = valToOperand(binary.right);
+                        const right = valToOperand(s.arena, binary.right);
                         instructions.append(.idiv(right)) catch unreachable;
 
                         const final_mov_src: Asm.Operand = switch (binary.operator) {
@@ -141,14 +141,14 @@ const Stage1 = struct {
                             .Mod => .register(.dx, .dword),
                             else => @panic("** Compiler Bug ** Unreachable path: expected divide or mod binary operator"),
                         };
-                        const final_mov_dst: Asm.Operand = valToOperand(binary.dst);
+                        const final_mov_dst: Asm.Operand = valToOperand(s.arena, binary.dst);
                         instructions.append(.mov(final_mov_src, final_mov_dst)) catch unreachable;
                     },
                 }
             },
             .Copy => |copy| {
-                const src = valToOperand(copy.src);
-                const dst = valToOperand(copy.dst);
+                const src = valToOperand(s.arena, copy.src);
+                const dst = valToOperand(s.arena, copy.dst);
                 instructions.append(.mov(src, dst)) catch unreachable;
             },
             .Jump => |jmp| {
@@ -156,14 +156,14 @@ const Stage1 = struct {
                 instructions.append(.jmp(label)) catch unreachable;
             },
             .JumpIfZero => |jmp| {
-                const condition = valToOperand(jmp.condition);
+                const condition = valToOperand(s.arena, jmp.condition);
                 const zero: Asm.Operand = .imm(0);
                 const label = std.fmt.allocPrint(s.arena, "{s}", .{jmp.label}) catch unreachable;
                 instructions.append(.cmp(zero, condition)) catch unreachable;
                 instructions.append(.jmpCC(.EqualEqual, label)) catch unreachable;
             },
             .JumpIfNotZero => |jmp| {
-                const condition = valToOperand(jmp.condition);
+                const condition = valToOperand(s.arena, jmp.condition);
                 const zero: Asm.Operand = .imm(0);
                 const label = std.fmt.allocPrint(s.arena, "{s}", .{jmp.label}) catch unreachable;
                 instructions.append(.cmp(zero, condition)) catch unreachable;
@@ -175,10 +175,10 @@ const Stage1 = struct {
             },
         }
     }
-    fn valToOperand(val: Tac.Val) Asm.Operand {
+    fn valToOperand(allocator: Allocator, val: Tac.Val) Asm.Operand {
         return switch (val) {
             .Const => |constant| .imm(constant),
-            .Var => |ident| .pseudo(ident),
+            .Var => |ident| .pseudo(std.fmt.allocPrint(allocator, "{s}", .{ident}) catch unreachable),
         };
     }
 };
