@@ -109,7 +109,7 @@ fn scan(s: *Self) void {
                     s.addToken(.EqualEqual);
                     continue;
                 }
-                @panic("'=' assigment not implemented");
+                s.addToken(.Assign);
             },
             '&' => {
                 if (s.peek() == '&') {
@@ -233,7 +233,7 @@ fn consumeAny(s: *Self) u8 {
 }
 
 fn identOrKeyword(s: *Self) void {
-    while (!s.isAtEnd(0) and (std.ascii.isAlphabetic(s.peek()) or s.peek() == '_')) {
+    while (!s.isAtEnd(0) and (std.ascii.isAlphabetic(s.peek()) or std.ascii.isDigit(s.peek()) or s.peek() == '_')) {
         _ = s.consumeAny();
     }
     const lexeme = s.src[s.start..s.current];
@@ -310,6 +310,7 @@ pub const TokenType = enum {
     LessThanEqual,
     GreaterThan,
     GreaterThanEqual,
+    Assign,
     MinusMinus,
 
     //

@@ -36,6 +36,7 @@ fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.FnDefn {
 }
 pub fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruction)) void {
     switch (stmt.*) {
+        .Expr, .Null => @panic("not implemented"),
         .Return => |ret| {
             const ret_val = s.genExpr(ret.expr, instructions);
             instructions.append(.ret(ret_val)) catch unreachable;
@@ -44,6 +45,7 @@ pub fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Ins
 }
 pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
+        .Var, .Assignment => @panic("not implemented"),
         .Constant => |constant| .constant(constant.value),
         .Unary => |unary| {
             const src = s.genExpr(unary.expr, instructions);

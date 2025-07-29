@@ -24,7 +24,6 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
     };
 
     const pg = self.parseProgram() catch |e| {
-        // std.log.debug("Parsing failed...", .{});
         self.error_reporter.printError(std.io.getStdErr().writer().any());
         return e;
     };
@@ -41,7 +40,15 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
         };
     }
 
-    if (opt.print_ast) AstPrinter.print(std.io.getStdErr().writer().any(), pg);
+    if (opt.print_ast) {
+        var buffer = ArrayList(u8).init(self.arena);
+        var stdErr = std.io.getStdErr();
+        AstPrinter.print(buffer.writer().any(), pg);
+        // all of this to check if I have extra space.. Ouch...
+        for (buffer.items) |c| {
+            _ = (if (c == ' ') stdErr.write("﹍") else stdErr.write(&[_]u8{c})) catch unreachable;
+        }
+    }
 
     return pg;
 }
@@ -57,10 +64,67 @@ fn parseFnDecl(p: *Self) ParseError!*Ast.FnDecl {
 
     try p.parseFnParams();
 
-    _ = try p.consume(.LCurly);
-    const body = try p.parseStmt();
-    _ = try p.consume(.RCurly);
+    const body = try p.parseBlock();
+
     return .init(p.arena, ident.lexeme, body, ident.line, ident.start);
+}
+
+fn parseBlock(p: *Self) ParseError!*Ast.Block {
+    const start_token = try p.consume(.LCurly);
+    var body = ArrayList(*Ast.BlockItem).init(p.arena);
+
+    while (p.peek()) |token| {
+        if (token.type == .RCurly) break;
+        const item = try p.parseBlockItem();
+        body.append(item) catch unreachable;
+    }
+    _ = try p.consume(.RCurly);
+    return .init(p.arena, body, start_token.line, start_token.start);
+}
+
+fn parseBlockItem(p: *Self) ParseError!*Ast.BlockItem {
+    const peek_token = p.peek() orelse {
+        try p.parseError(
+            ParseError.StatementExpected,
+            "Unexpected end of input while parsing block item",
+            .{},
+        );
+    };
+    return switch (peek_token.type) {
+        .Int => .decl(p.arena, try p.parseDecl()),
+        .Semicolon => {
+            _ = try p.consume(.Semicolon);
+            return .stmt(p.arena, .nullStmt(p.arena, peek_token.line, peek_token.start));
+        },
+        else => .stmt(p.arena, try p.parseStmt()),
+    };
+}
+
+fn parseDecl(p: *Self) ParseError!*Ast.Decl {
+    // We only support `int` at the moment
+    const token = p.peek() orelse {
+        try p.parseError(ParseError.MissingToken, "expected decl `int`", .{});
+    };
+    if (token.type != .Int) {
+        try p.parseError(ParseError.UnexpectedToken, "expected int found `{s}` << {s} >> ", .{ token.lexeme, @tagName(token.type) });
+    }
+    _ = try p.consume(.Int);
+    const ident_token = try p.consume(.Ident);
+    const ident = ident_token.lexeme;
+
+    if (std.ascii.isDigit(ident[0])) {
+        try p.parseError(ParseError.InvalidIdent, "identifier should not start with digit. Found `{s}` << {s} >>", .{ ident, @tagName(ident_token.type) });
+    }
+
+    var var_initializer: ?*Ast.Expr = null;
+    if (p.peek()) |peeked_token| {
+        if (peeked_token.type == .Assign) {
+            _ = try p.consumeAny();
+            var_initializer = try p.parseExpr(0);
+        }
+    }
+    _ = try p.consume(.Semicolon);
+    return .variableDecl(p.arena, ident, var_initializer, ident_token.line, ident_token.start);
 }
 
 fn parseFnParams(p: *Self) ParseError!void {
@@ -80,12 +144,19 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
         );
     };
     return switch (token.type) {
-        .Return => return try p.parseReturnStmt(),
-        else => try p.parseError(
-            ParseError.StatementExpected,
-            "Unexpected token while parsing statement `{s}` << {s} >>",
-            .{ token.lexeme, @tagName(token.type) },
-        ),
+        .Return => try p.parseReturnStmt(),
+        else => {
+            const peeked_token = p.peek() orelse {
+                try p.parseError(
+                    ParseError.StatementExpected,
+                    "Unexpected token while parsing statement `{s}` << {s} >>",
+                    .{ token.lexeme, @tagName(token.type) },
+                );
+            };
+            const expr = try p.parseExpr(0);
+            _ = try p.consume(.Semicolon);
+            return .exprStmt(p.arena, expr, peeked_token.line, peeked_token.start);
+        },
     };
 }
 
@@ -128,6 +199,10 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             _ = try p.consume(.RParen);
             return inner_expr;
         },
+        .Ident => {
+            const ident_token = try p.consumeAny();
+            return .varExpr(p.arena, ident_token.lexeme, ident_token.line, ident_token.start);
+        },
         else => try p.parseError(
             ParseError.UnexpectedToken,
             "Unexpected token while parsing factor`{s}` << {s} >>",
@@ -164,50 +239,65 @@ fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
 
 fn isBinaryOperator(token_type: TokenType) bool {
     return switch (token_type) {
-        .Plus,
-        .Minus,
-        .Multiply,
-        .Divide,
-        .Mod,
-        .BitNot,
+        .And,
+        .Assign,
         .BitAnd,
+        .BitNot,
         .BitOr,
         .BitXor,
-        .LeftShift,
-        .RightShift,
-        .And,
-        .Or,
+        .Divide,
         .EqualEqual,
-        .NotEqual,
-        .LessThan,
-        .LessThanEqual,
         .GreaterThan,
         .GreaterThanEqual,
+        .LeftShift,
+        .LessThan,
+        .LessThanEqual,
+        .Minus,
+        .Mod,
+        .Multiply,
+        .NotEqual,
+        .Or,
+        .Plus,
+        .RightShift,
         => true,
-        else => false,
+
+        .LParen,
+        .RParen,
+        .LCurly,
+        .RCurly,
+        .Semicolon,
+        .Not,
+        .MinusMinus,
+        .Ident,
+        .IntLiteral,
+        .Int,
+        .Return,
+        .Void,
+        => false,
     };
 }
 
 fn parseBinaryOperator(p: Self, token_type: TokenType) ParseError!Ast.BinaryOperator {
     return switch (token_type) {
-        .Plus => .Add,
-        .Minus => .Subtract,
-        .Multiply => .Multiply,
-        .Divide => .Divide,
-        .Mod => .Mod,
+        .And => .And,
+        .Assign => .Assign,
         .BitAnd => .BitAnd,
         .BitOr => .BitOr,
         .BitXor => .BitXor,
-        .LeftShift => .LeftShift,
-        .RightShift => .RightShift,
-        .And => .And,
-        .Or => .Or,
+        .Divide => .Divide,
         .EqualEqual => .EqualEqual,
-        .NotEqual => .NotEqual,
-        .LessThan => .LessThan,
-        .LessThanEqual => .LessThanEqual,
         .GreaterThan => .GreaterThan,
         .GreaterThanEqual => .GreaterThanEqual,
+        .LeftShift => .LeftShift,
+        .LessThan => .LessThan,
+        .LessThanEqual => .LessThanEqual,
+        .Minus => .Subtract,
+        .Mod => .Mod,
+        .Multiply => .Multiply,
+        .NotEqual => .NotEqual,
+        .Or => .Or,
+        .Plus => .Add,
+        .RightShift => .RightShift,
 
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseBinaryOperator called on non binary token", .{}),
     };
@@ -226,8 +316,9 @@ fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
         .BitOr => 23,
         .And => 10,
         .Or => 5,
+        .Assign => 1,
 
-        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** precedence level asked for something that doesn't support precendence", .{}),
+        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** precedence level asked for something that doesn't support precendence << {s} >>", .{@tagName(token_type)}),
     };
 }
 
@@ -236,7 +327,7 @@ fn parseUnaryOperator(p: Self, token_type: TokenType) ParseError!Ast.UnaryOperat
         .Minus => .Negate,
         .BitNot => .BitNot,
         .Not => .Not,
-        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseUnaryOperator called on non unary token", .{}),
+        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseUnaryOperator called on non unary token << {s} >>", .{@tagName(token_type)}),
     };
 }
 
@@ -284,6 +375,7 @@ fn consume(p: *Self, expected: TokenType) ParseError!*const Token {
 fn peek(p: Self) ?*const Token {
     return p.peekOffset(0);
 }
+
 fn peekOffset(p: Self, offset: i8) ?*const Token {
     if (p.isAtEnd()) return null;
     return &p.tokens[p.current + @as(usize, @intCast(offset))];
@@ -306,12 +398,62 @@ pub const Ast = struct {
             return pg;
         }
     };
-    pub const FnDecl = struct {
-        name: []const u8,
-        body: *Stmt,
+
+    pub const Block = struct {
+        block_item: ArrayList(*BlockItem),
         loc: SourceLocation,
 
-        pub fn init(allocator: Allocator, name: []const u8, body: *Stmt, line: usize, start: usize) *FnDecl {
+        pub fn init(allocator: Allocator, block_item: ArrayList(*BlockItem), line: usize, start: usize) *Block {
+            const block = allocator.create(Block) catch unreachable;
+            block.* = .{
+                .block_item = block_item,
+                .loc = .{ .line = line, .start = start },
+            };
+            return block;
+        }
+    };
+
+    pub const BlockItem = union(enum) {
+        Stmt: *Stmt,
+        Decl: *Decl,
+
+        pub fn stmt(allocator: Allocator, stmt_item: *Stmt) *BlockItem {
+            const item = allocator.create(BlockItem) catch unreachable;
+            item.* = .{ .Stmt = stmt_item };
+            return item;
+        }
+
+        pub fn decl(allocator: Allocator, decl_item: *Decl) *BlockItem {
+            const item = allocator.create(BlockItem) catch unreachable;
+            item.* = .{ .Decl = decl_item };
+            return item;
+        }
+    };
+    pub const Decl = union(enum) {
+        Fn: *FnDecl,
+        Var: *VarDecl,
+
+        pub fn variableDecl(allocator: Allocator, ident: []const u8, init: ?*Expr, line: usize, start: usize) *Decl {
+            const item = allocator.create(Decl) catch unreachable;
+            const _var_decl = allocator.create(VarDecl) catch unreachable;
+            _var_decl.* = .{ .ident = ident, .init = init, .loc = .{ .line = line, .start = start } };
+            item.* = .{ .Var = _var_decl };
+            return item;
+        }
+    };
+
+    pub const VarDecl = struct {
+        ident: []const u8,
+        init: ?*Expr,
+        loc: SourceLocation,
+    };
+
+    pub const FnDecl = struct {
+        name: []const u8,
+        body: *Block,
+        loc: SourceLocation,
+
+        pub fn init(allocator: Allocator, name: []const u8, body: *Block, line: usize, start: usize) *FnDecl {
             const fn_decl = allocator.create(FnDecl) catch unreachable;
             fn_decl.* = .{
                 .name = name,
@@ -323,6 +465,25 @@ pub const Ast = struct {
     };
     pub const Stmt = union(enum) {
         Return: struct { expr: *Expr, loc: SourceLocation },
+        Expr: struct { expr: *Expr, loc: SourceLocation },
+        Null: SourceLocation,
+
+        pub fn nullStmt(allocator: Allocator, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{ .Null = .{ .line = line, .start = start } };
+            return stmt;
+        }
+
+        pub fn exprStmt(allocator: Allocator, expr: *Expr, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .Expr = .{
+                    .expr = expr,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
 
         pub fn returnStmt(allocator: Allocator, expr: *Expr, line: usize, start: usize) *Stmt {
             const stmt = allocator.create(Stmt) catch unreachable;
@@ -337,8 +498,33 @@ pub const Ast = struct {
     };
     pub const Expr = union(enum) {
         Constant: struct { value: i64, loc: SourceLocation },
+        Var: struct { ident: []const u8, loc: SourceLocation },
         Unary: struct { operator: UnaryOperator, expr: *Expr, loc: SourceLocation },
         Binary: struct { operator: BinaryOperator, left: *Expr, right: *Expr, loc: SourceLocation },
+        Assignment: struct { src: *Expr, dst: *Expr, loc: SourceLocation },
+
+        pub fn assignmentExpr(allocator: Allocator, src: *Expr, dst: *Expr, line: usize, start: usize) *Expr {
+            const expr = allocator.create(Expr) catch unreachable;
+            expr.* = .{
+                .Assignment = .{
+                    .src = src,
+                    .dst = dst,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return expr;
+        }
+
+        pub fn varExpr(allocator: Allocator, ident: []const u8, line: usize, start: usize) *Expr {
+            const expr = allocator.create(Expr) catch unreachable;
+            expr.* = .{
+                .Var = .{
+                    .ident = ident,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return expr;
+        }
 
         pub fn binaryExpr(allocator: Allocator, operator: BinaryOperator, left: *Expr, right: *Expr, line: usize, start: usize) *Expr {
             const expr = allocator.create(Expr) catch unreachable;
@@ -383,24 +569,24 @@ pub const Ast = struct {
     };
     const BinaryOperator = enum {
         Add,
-        Subtract,
-        Multiply,
-        Divide,
-        Mod,
+        And,
+        Assign,
         BitAnd,
         BitOr,
         BitXor,
-        LeftShift,
-        RightShift,
-
-        And,
-        Or,
+        Divide,
         EqualEqual,
-        NotEqual,
-        LessThan,
-        LessThanEqual,
         GreaterThan,
         GreaterThanEqual,
+        LeftShift,
+        LessThan,
+        LessThanEqual,
+        Mod,
+        Multiply,
+        NotEqual,
+        Or,
+        RightShift,
+        Subtract,
     };
 
     const SourceLocation = struct {
@@ -414,6 +600,8 @@ const ParseError = error{
     StatementExpected,
     IntExpected,
     UnexpectedEndOfToken,
+    MissingToken,
+    InvalidIdent,
 } || CompilerError;
 
 const AstPrinter = struct {
@@ -423,15 +611,49 @@ const AstPrinter = struct {
         printFnDecl(writer, pg.@"fn", 1);
         write(writer, "\n");
     }
+
     fn printFnDecl(writer: AnyWriter, fn_decl: *const Ast.FnDecl, depth: usize) void {
         printSpace(writer, depth);
 
         writeFmt(writer, "int {s}(void) {{\n", .{fn_decl.name});
-        printStmt(writer, fn_decl.body, depth + 1);
+
+        printBlock(writer, fn_decl.body, depth + 1);
 
         printSpace(writer, depth);
         write(writer, "}");
     }
+
+    fn printBlock(writer: AnyWriter, block: *const Ast.Block, depth: usize) void {
+        for (block.block_item.items) |item| {
+            printBlockItem(writer, item, depth);
+        }
+    }
+
+    fn printBlockItem(writer: AnyWriter, block_item: *const Ast.BlockItem, depth: usize) void {
+        switch (block_item.*) {
+            .Stmt => |stmt| printStmt(writer, stmt, depth),
+            .Decl => |decl| printDecl(writer, decl, depth),
+        }
+    }
+
+    fn printDecl(writer: AnyWriter, decl: *const Ast.Decl, depth: usize) void {
+        switch (decl.*) {
+            .Fn => |fn_decl| printFnDecl(writer, fn_decl, depth),
+            .Var => |var_decl| printVarDecl(writer, var_decl, depth),
+        }
+    }
+
+    fn printVarDecl(writer: AnyWriter, var_decl: *const Ast.VarDecl, depth: usize) void {
+        printSpace(writer, depth);
+        write(writer, "int ");
+        writeFmt(writer, "{s}", .{var_decl.ident});
+        if (var_decl.init) |initializer| {
+            write(writer, " = ");
+            printExpr(writer, initializer);
+        }
+        write(writer, ";\n");
+    }
+
     fn printStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
         printSpace(writer, depth);
         switch (stmt.*) {
@@ -440,11 +662,20 @@ const AstPrinter = struct {
                 write(writer, " ");
                 printExpr(writer, return_stmt.expr);
             },
+            .Expr => |expr| printExpr(writer, expr.expr),
+            .Null => write(writer, ";"),
         }
         write(writer, ";\n");
     }
     fn printExpr(writer: AnyWriter, expr: *const Ast.Expr) void {
         switch (expr.*) {
+            .Var => |var_expr| {
+                writeFmt(writer, "{s}", .{var_expr.ident});
+            },
+            .Assignment => |assignment_expr| {
+                printExpr(writer, assignment_expr.dst);
+                printExpr(writer, assignment_expr.src);
+            },
             .Constant => |constant_expr| {
                 writeFmt(writer, "{d}", .{constant_expr.value});
             },
@@ -466,6 +697,7 @@ const AstPrinter = struct {
                 writeFmt(writer, " {s} ", .{
                     switch (binary_expr.operator) {
                         .Add => "+",
+                        .Assign => "=",
                         .Subtract => "-",
                         .Multiply => "*",
                         .Divide => "/",
