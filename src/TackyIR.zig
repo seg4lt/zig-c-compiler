@@ -82,7 +82,28 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
 }
 pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
-        .Postfix => @panic("not implemented"),
+        .Postfix => |postfix| {
+            const expr_result = s.genExpr(postfix.expr, instructions);
+            const prev_result_var = s.makeVar();
+            const prev_value: Tac.Instruction = .copy(expr_result, prev_result_var);
+
+            instructions.append(prev_value) catch unreachable;
+
+            const one: Tac.Val = .constant(1);
+            switch (postfix.operator) {
+                .Add => {
+                    const dst = s.makeVar();
+                    instructions.append(.binary(.Add, expr_result, one, dst)) catch unreachable;
+                    instructions.append(.copy(dst, expr_result)) catch unreachable;
+                },
+                .Subtract => {
+                    const dst = s.makeVar();
+                    instructions.append(.binary(.Subtract, expr_result, one, dst)) catch unreachable;
+                    instructions.append(.copy(dst, expr_result)) catch unreachable;
+                },
+            }
+            return prev_result_var;
+        },
         .Var => |variable| .variable(std.fmt.allocPrint(s.arena, "{s}", .{variable.ident}) catch unreachable),
         .Assignment => |assignment| {
             const result = s.genExpr(assignment.src, instructions);
