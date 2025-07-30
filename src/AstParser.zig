@@ -195,16 +195,44 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             const inner_expr = try p.parseFactor();
             return .unaryExpr(p.arena, operator, inner_expr, op_token.line, op_token.start);
         },
+        .MinusMinus, .PlusPlus => {
+            const op_token = try p.consumeAny();
+            var var_expr = try p.parseFactor();
+            var_expr = recurseGetGroupInnerExpr(var_expr);
+
+            if (var_expr.* != .Var) {
+                try p.parseErrorOnToken(
+                    ParseError.InvalidPrefixOperand,
+                    op_token,
+                    "invalid operand found for prefix operator `{s}`",
+                    .{@tagName(var_expr.*)},
+                );
+            }
+            const inner = var_expr.Var;
+            const new_var: *Ast.Expr = .varExpr(p.arena, inner.ident, inner.loc.line, inner.loc.start);
+            // clone because sema will modify this value to be unique - using same entity will double resolve same ident
+            const new_var_clone: *Ast.Expr = .varExpr(p.arena, inner.ident, inner.loc.line, inner.loc.start);
+
+            const one: *Ast.Expr = .constantExpr(p.arena, 1, op_token.line, op_token.start);
+            const prefix_op: Ast.BinaryOperator = switch (op_token.type) {
+                .MinusMinus => .Subtract,
+                .PlusPlus => .Add,
+                else => @panic("** Compiler Bug ** only prefix operator should be evaluated"),
+            };
+            const binary: *Ast.Expr = .binaryExpr(p.arena, prefix_op, new_var, one, op_token.line, op_token.start);
+            return .assignmentExpr(p.arena, binary, new_var_clone, op_token.line, op_token.start);
+        },
         .LParen => {
             const group_token = try p.consume(.LParen);
             const inner_expr = try p.parseExpr(0);
             const group_expr: *Ast.Expr = .groupExpr(p.arena, inner_expr, group_token.line, group_token.start);
             _ = try p.consume(.RParen);
-            return group_expr;
+            return try p.parsePostfixExpr(group_expr);
         },
         .Ident => {
             const ident_token = try p.consumeAny();
-            return .varExpr(p.arena, ident_token.lexeme, ident_token.line, ident_token.start);
+            const var_expr: *Ast.Expr = .varExpr(p.arena, ident_token.lexeme, ident_token.line, ident_token.start);
+            return p.parsePostfixExpr(var_expr);
         },
         else => try p.parseError(
             ParseError.UnexpectedToken,
@@ -212,6 +240,33 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             .{ token.lexeme, @tagName(token.type) },
         ),
     }
+}
+
+fn parsePostfixExpr(p: *Self, expr: *Ast.Expr) ParseError!*Ast.Expr {
+    const peeked_token = p.peek() orelse {
+        return expr;
+    };
+    if (peeked_token.type != .MinusMinus and peeked_token.type != .PlusPlus) {
+        return expr;
+    }
+    const inner_expr = recurseGetGroupInnerExpr(expr);
+    if (inner_expr.* != .Var) {
+        try p.parseErrorOnToken(
+            ParseError.InvalidLValue,
+            peeked_token,
+            "invalid l value for postfix operator `{s}`",
+            .{@tagName(expr.*)},
+        );
+    }
+
+    const postfix_op_token = try p.consumeAny();
+    const postfix_op: Ast.PostfixOperator = switch (postfix_op_token.type) {
+        .MinusMinus => .Subtract,
+        .PlusPlus => .Add,
+        else => @panic("** Compiler Bug ** only prefix operator should be evaluated"),
+    };
+    const postfix_expr: *Ast.Expr = .postfixExpr(p.arena, postfix_op, expr, postfix_op_token.line, postfix_op_token.start);
+    return p.parsePostfixExpr(postfix_expr);
 }
 
 fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
@@ -236,6 +291,19 @@ fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
             const right = try p.parseExpr(try p.getPrecedence(assignment_token.type));
             const assignment: *Ast.Expr = .assignmentExpr(p.arena, right, left, assignment_token.line, assignment_token.start);
             left = assignment;
+        } else if (isCompoundAssignmentOperator(next_token.type)) {
+            const op_token = try p.consumeAny();
+            const op = try p.parseBinaryOperator(op_token.type);
+            const right = try p.parseExpr(try p.getPrecedence(next_token.type));
+
+            // cloning here because on sema phase we replace variable identifier
+            // if we use same pointer, it will look for updated name on our map which is wrong
+            const left_clone = p.arena.create(Ast.Expr) catch unreachable;
+            left_clone.* = left.*;
+
+            const binary: *Ast.Expr = .binaryExpr(p.arena, op, left_clone, right, op_token.line, op_token.start);
+            const assignment: *Ast.Expr = .assignmentExpr(p.arena, binary, left, op_token.line, op_token.start);
+            left = assignment;
         } else {
             const op_token = try p.consumeAny();
             const op = try p.parseBinaryOperator(op_token.type);
@@ -252,6 +320,69 @@ fn isBinaryOperator(token_type: TokenType) bool {
         .And,
         .Assign,
         .BitAnd,
+        .BitAndEqual,
+        .BitNot,
+        .BitOr,
+        .BitOrEqual,
+        .BitXor,
+        .BitXorEqual,
+        .Divide,
+        .DivideEqual,
+        .EqualEqual,
+        .GreaterThan,
+        .GreaterThanEqual,
+        .LeftShift,
+        .LeftShiftEqual,
+        .LessThan,
+        .LessThanEqual,
+        .Minus,
+        .MinusEqual,
+        .Mod,
+        .ModEqual,
+        .Multiply,
+        .MultiplyEqual,
+        .NotEqual,
+        .Or,
+        .Plus,
+        .PlusEqual,
+        .RightShift,
+        .RightShiftEqual,
+        => true,
+
+        .Ident,
+        .Int,
+        .IntLiteral,
+        .LCurly,
+        .LParen,
+        .MinusMinus,
+        .Not,
+        .PlusPlus,
+        .RCurly,
+        .RParen,
+        .Return,
+        .Semicolon,
+        .Void,
+        => false,
+    };
+}
+
+fn isCompoundAssignmentOperator(token_type: TokenType) bool {
+    return switch (token_type) {
+        .BitAndEqual,
+        .BitOrEqual,
+        .BitXorEqual,
+        .DivideEqual,
+        .LeftShiftEqual,
+        .MinusEqual,
+        .ModEqual,
+        .MultiplyEqual,
+        .PlusEqual,
+        .RightShiftEqual,
+        => true,
+
+        .And,
+        .Assign,
+        .BitAnd,
         .BitNot,
         .BitOr,
         .BitXor,
@@ -259,29 +390,28 @@ fn isBinaryOperator(token_type: TokenType) bool {
         .EqualEqual,
         .GreaterThan,
         .GreaterThanEqual,
+        .Ident,
+        .Int,
+        .IntLiteral,
+        .LCurly,
+        .LParen,
         .LeftShift,
         .LessThan,
         .LessThanEqual,
         .Minus,
+        .MinusMinus,
         .Mod,
         .Multiply,
+        .Not,
         .NotEqual,
         .Or,
         .Plus,
-        .RightShift,
-        => true,
-
-        .LParen,
-        .RParen,
-        .LCurly,
+        .PlusPlus,
         .RCurly,
-        .Semicolon,
-        .Not,
-        .MinusMinus,
-        .Ident,
-        .IntLiteral,
-        .Int,
+        .RParen,
         .Return,
+        .RightShift,
+        .Semicolon,
         .Void,
         => false,
     };
@@ -290,23 +420,23 @@ fn isBinaryOperator(token_type: TokenType) bool {
 fn parseBinaryOperator(p: Self, token_type: TokenType) ParseError!Ast.BinaryOperator {
     return switch (token_type) {
         .And => .And,
-        .BitAnd => .BitAnd,
-        .BitOr => .BitOr,
-        .BitXor => .BitXor,
-        .Divide => .Divide,
+        .BitAndEqual, .BitAnd => .BitAnd,
+        .BitOr, .BitOrEqual => .BitOr,
+        .BitXor, .BitXorEqual => .BitXor,
+        .Divide, .DivideEqual => .Divide,
         .EqualEqual => .EqualEqual,
         .GreaterThan => .GreaterThan,
         .GreaterThanEqual => .GreaterThanEqual,
-        .LeftShift => .LeftShift,
+        .LeftShift, .LeftShiftEqual => .LeftShift,
         .LessThan => .LessThan,
         .LessThanEqual => .LessThanEqual,
-        .Minus => .Subtract,
-        .Mod => .Mod,
-        .Multiply => .Multiply,
+        .Minus, .MinusEqual => .Subtract,
+        .Mod, .ModEqual => .Mod,
+        .Multiply, .MultiplyEqual => .Multiply,
         .NotEqual => .NotEqual,
         .Or => .Or,
-        .Plus => .Add,
-        .RightShift => .RightShift,
+        .Plus, .PlusEqual => .Add,
+        .RightShift, .RightShiftEqual => .RightShift,
 
         else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseBinaryOperator called on non binary token", .{}),
     };
@@ -325,9 +455,24 @@ fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
         .BitOr => 23,
         .And => 10,
         .Or => 5,
-        .Assign => 1,
+        .Assign,
+        .PlusEqual,
+        .MinusEqual,
+        .MultiplyEqual,
+        .DivideEqual,
+        .ModEqual,
+        .BitAndEqual,
+        .BitOrEqual,
+        .BitXorEqual,
+        .LeftShiftEqual,
+        .RightShiftEqual,
+        => 1,
 
-        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** precedence level asked for something that doesn't support precendence << {s} >>", .{@tagName(token_type)}),
+        else => try p.parseError(
+            ParseError.CompilerBug,
+            "** Compiler Bug ** precedence level asked for something that doesn't support precendence << {s} >>",
+            .{@tagName(token_type)},
+        ),
     };
 }
 
@@ -336,7 +481,11 @@ fn parseUnaryOperator(p: Self, token_type: TokenType) ParseError!Ast.UnaryOperat
         .Minus => .Negate,
         .BitNot => .BitNot,
         .Not => .Not,
-        else => try p.parseError(ParseError.CompilerBug, "** Compiler Bug ** parseUnaryOperator called on non unary token << {s} >>", .{@tagName(token_type)}),
+        else => try p.parseError(
+            ParseError.CompilerBug,
+            "** Compiler Bug ** parseUnaryOperator called on non unary token << {s} >>",
+            .{@tagName(token_type)},
+        ),
     };
 }
 
@@ -347,6 +496,10 @@ fn parseError(p: Self, e: ParseError, comptime fmt: []const u8, args: anytype) P
         p.error_reporter.addError(0, 0, fmt, args);
         return e;
     };
+    try parseErrorOnToken(p, e, token, fmt, args);
+}
+
+fn parseErrorOnToken(p: Self, e: ParseError, token: *const Token, comptime fmt: []const u8, args: anytype) ParseError!noreturn {
     p.error_reporter.addError(token.line, token.start, fmt, args);
     return e;
 }
@@ -512,6 +665,19 @@ pub const Ast = struct {
         Binary: struct { operator: BinaryOperator, left: *Expr, right: *Expr, loc: SourceLocation },
         Assignment: struct { src: *Expr, dst: *Expr, loc: SourceLocation },
         Group: struct { expr: *Expr, loc: SourceLocation },
+        Postfix: struct { operator: PostfixOperator, expr: *Expr, loc: SourceLocation },
+
+        pub fn postfixExpr(allocator: Allocator, operator: PostfixOperator, expr: *Expr, line: usize, start: usize) *Expr {
+            const postfix_expr = allocator.create(Expr) catch unreachable;
+            postfix_expr.* = .{
+                .Postfix = .{
+                    .operator = operator,
+                    .expr = expr,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return postfix_expr;
+        }
 
         pub fn groupExpr(allocator: Allocator, expr: *Expr, line: usize, start: usize) *Expr {
             const group_expr = allocator.create(Expr) catch unreachable;
@@ -583,6 +749,7 @@ pub const Ast = struct {
             return expr;
         }
     };
+    pub const PostfixOperator = enum { Add, Subtract };
     const UnaryOperator = enum {
         Negate,
         BitNot,
@@ -616,12 +783,14 @@ pub const Ast = struct {
 };
 
 const ParseError = error{
+    InvalidLValue,
     UnexpectedToken,
     StatementExpected,
     IntExpected,
     UnexpectedEndOfToken,
     MissingToken,
     InvalidIdent,
+    InvalidPrefixOperand,
 } || CompilerError;
 
 pub const AstPrinter = struct {
@@ -692,6 +861,13 @@ pub const AstPrinter = struct {
             .Var => |var_expr| {
                 writeFmt(writer, "{s}", .{var_expr.ident});
             },
+            .Postfix => |postfix_expr| {
+                printExpr(writer, postfix_expr.expr);
+                switch (postfix_expr.operator) {
+                    .Add => write(writer, "++"),
+                    .Subtract => write(writer, "--"),
+                }
+            },
             .Group => |group_expr| {
                 write(writer, "(");
                 printExpr(writer, group_expr.expr);
@@ -760,6 +936,11 @@ pub const AstPrinter = struct {
         _ = w.print(fmt, args) catch unreachable;
     }
 };
+
+pub fn recurseGetGroupInnerExpr(expr: *Ast.Expr) *Ast.Expr {
+    if (expr.* != .Group) return expr;
+    return recurseGetGroupInnerExpr(expr.Group.expr);
+}
 
 const std = @import("std");
 const ErrorReporter = @import("ErrorReporter.zig");

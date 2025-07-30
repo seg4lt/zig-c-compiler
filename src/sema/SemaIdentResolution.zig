@@ -130,6 +130,19 @@ fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
 
 fn resolveExpr(s: Self, expr: *Ast.Expr, scope: *ScopeIdents) SemaError!void {
     switch (expr.*) {
+        .Postfix => |postfix_expr| {
+            const inner_expr = recurseGetGroupInnerExpr(postfix_expr.expr);
+            if (inner_expr.* != .Var) {
+                try s.semaError(
+                    SemaError.InvalidLValue,
+                    postfix_expr.loc.line,
+                    postfix_expr.loc.start,
+                    "invalid lvalue for postfix: `{s}`\n",
+                    .{@tagName(inner_expr.*)},
+                );
+            }
+            try s.resolveExpr(inner_expr, scope);
+        },
         .Var => |*variable| {
             const ident = scope.get(variable.ident) orelse {
                 try s.semaError(
@@ -148,11 +161,7 @@ fn resolveExpr(s: Self, expr: *Ast.Expr, scope: *ScopeIdents) SemaError!void {
             try s.resolveExpr(binary.right, scope);
         },
         .Assignment => |assignment| {
-            const dst = switch (assignment.dst.*) {
-                .Group => recurseGetGroupInnerExpr(assignment.dst),
-                else => assignment.dst,
-            };
-
+            const dst = recurseGetGroupInnerExpr(assignment.dst);
             if (dst.* != .Var) {
                 try s.semaError(
                     SemaError.InvalidLValue,
@@ -160,8 +169,8 @@ fn resolveExpr(s: Self, expr: *Ast.Expr, scope: *ScopeIdents) SemaError!void {
                     // to much work to get actual start, maybe should have been a normal c union type
                     // - 2 so it goes back two step from `=` symbol, maybe this is good enough
                     assignment.loc.start - 2,
-                    "expected variable (invalid lvalue) found: `{any}`\n",
-                    .{dst.*},
+                    "expected variable (invalid lvalue) found: `{s}`\n",
+                    .{@tagName(dst.*)},
                 );
             }
             try s.resolveExpr(dst, scope);

@@ -117,6 +117,11 @@ fn scan(s: *Self) void {
                     s.addToken(.And);
                     continue;
                 }
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.BitAndEqual);
+                    continue;
+                }
                 s.addToken(.BitAnd);
             },
             '|' => {
@@ -125,12 +130,31 @@ fn scan(s: *Self) void {
                     s.addToken(.Or);
                     continue;
                 }
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.BitOrEqual);
+                    continue;
+                }
                 s.addToken(.BitOr);
             },
-            '^' => s.addToken(.BitXor),
+            '^' => {
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.BitXorEqual);
+                    continue;
+                }
+                s.addToken(.BitXor);
+            },
             '>' => {
                 if (s.peek() == '>') {
                     _ = s.consumeAny();
+
+                    if (s.peek() == '=') {
+                        _ = s.consumeAny();
+                        s.addToken(.RightShiftEqual);
+                        continue;
+                    }
+
                     s.addToken(.RightShift);
                     continue;
                 }
@@ -144,6 +168,11 @@ fn scan(s: *Self) void {
             '<' => {
                 if (s.peek() == '<') {
                     _ = s.consumeAny();
+                    if (s.peek() == '=') {
+                        _ = s.consumeAny();
+                        s.addToken(.LeftShiftEqual);
+                        continue;
+                    }
                     s.addToken(.LeftShift);
                     continue;
                 }
@@ -154,23 +183,62 @@ fn scan(s: *Self) void {
                 }
                 s.addToken(.LessThan);
             },
-            '+' => s.addToken(.Plus),
-            '-' => {
-                if (s.peek() == '-') {
-                    @panic("TODO: -- is is not implemented yet");
-                    // _ = s.consumeAny();
-                    // s.addToken("--", .MinusMinus);
-                    // continue;
+            '+' => {
+                switch (s.peek()) {
+                    '+' => {
+                        _ = s.consumeAny();
+                        s.addToken(.PlusPlus);
+                        continue;
+                    },
+                    '=' => {
+                        _ = s.consumeAny();
+                        s.addToken(.PlusEqual);
+                        continue;
+                    },
+                    else => s.addToken(.Plus),
                 }
-                s.addToken(.Minus);
+            },
+            '-' => {
+                switch (s.peek()) {
+                    '-' => {
+                        _ = s.consumeAny();
+                        s.addToken(.MinusMinus);
+                        continue;
+                    },
+                    '=' => {
+                        _ = s.consumeAny();
+                        s.addToken(.MinusEqual);
+                        continue;
+                    },
+                    else => s.addToken(.Minus),
+                }
             },
             '/' => switch (s.peek()) {
                 '/' => s.comment(),
                 '*' => s.comment(),
+                '=' => {
+                    _ = s.consumeAny();
+                    s.addToken(.DivideEqual);
+                    continue;
+                },
                 else => s.addToken(.Divide),
             },
-            '*' => s.addToken(.Multiply),
-            '%' => s.addToken(.Mod),
+            '*' => {
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.MultiplyEqual);
+                    continue;
+                }
+                s.addToken(.Multiply);
+            },
+            '%' => {
+                if (s.peek() == '=') {
+                    _ = s.consumeAny();
+                    s.addToken(.ModEqual);
+                    continue;
+                }
+                s.addToken(.Mod);
+            },
             else => {
                 s.appendError("Unknown character: {c}\n", .{c});
             },
@@ -311,6 +379,21 @@ pub const TokenType = enum {
     GreaterThan,
     GreaterThanEqual,
     Assign,
+
+    // compound assignment operators
+    PlusEqual,
+    MinusEqual,
+    MultiplyEqual,
+    DivideEqual,
+    ModEqual,
+    BitAndEqual,
+    BitOrEqual,
+    BitXorEqual,
+    LeftShiftEqual,
+    RightShiftEqual,
+
+    // increment and decrement operators
+    PlusPlus,
     MinusMinus,
 
     //
