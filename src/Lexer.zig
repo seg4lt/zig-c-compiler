@@ -95,6 +95,8 @@ fn scan(s: *Self) void {
             '}' => s.addToken(.RCurly),
             ';' => s.addToken(.Semicolon),
             '~' => s.addToken(.BitNot),
+            '?' => s.addToken(.Question),
+            ':' => s.addToken(.Colon),
             '!' => {
                 if (s.peek() == '=') {
                     _ = s.consumeAny();
@@ -323,6 +325,8 @@ fn getTokenType(lexeme: []const u8) TokenType {
     if (std.mem.eql(u8, "int", lexeme)) return .Int;
     if (std.mem.eql(u8, "void", lexeme)) return .Void;
     if (std.mem.eql(u8, "return", lexeme)) return .Return;
+    if (std.mem.eql(u8, "if", lexeme)) return .If;
+    if (std.mem.eql(u8, "else", lexeme)) return .Else;
     return .Ident;
 }
 
@@ -356,6 +360,8 @@ pub const TokenType = enum {
     LCurly,
     RCurly,
     Semicolon,
+    Question,
+    Colon,
 
     // operators
     BitNot,
@@ -404,6 +410,8 @@ pub const TokenType = enum {
     Int,
     Return,
     Void,
+    If,
+    Else,
 };
 
 const std = @import("std");

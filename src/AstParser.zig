@@ -147,6 +147,11 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
     };
     return switch (token.type) {
         .Return => try p.parseReturnStmt(),
+        .If => try p.parseIfStmt(),
+        .LCurly => {
+            const body = try p.parseBlock();
+            return .compoundStmt(p.arena, body, token.line, token.start);
+        },
         else => {
             const peeked_token = p.peek() orelse {
                 try p.parseError(
@@ -160,6 +165,24 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             return .exprStmt(p.arena, expr, peeked_token.line, peeked_token.start);
         },
     };
+}
+
+fn parseIfStmt(p: *Self) ParseError!*Ast.Stmt {
+    const if_token = try p.consume(.If);
+    _ = try p.consume(.LParen);
+    const condition = try p.parseExpr(0);
+    _ = try p.consume(.RParen);
+
+    const then_block = try p.parseStmt();
+
+    var else_block: ?*Ast.Stmt = null;
+    if (p.peek()) |token| {
+        if (token.type == .Else) {
+            _ = try p.consume(.Else);
+            else_block = try p.parseStmt();
+        }
+    }
+    return .ifStmt(p.arena, condition, then_block, else_block, if_token.line, if_token.start);
 }
 
 fn parseReturnStmt(p: *Self) ParseError!*Ast.Stmt {
@@ -304,6 +327,13 @@ fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
             const binary: *Ast.Expr = .binaryExpr(p.arena, op, left_clone, right, op_token.line, op_token.start);
             const assignment: *Ast.Expr = .assignmentExpr(p.arena, binary, left, op_token.line, op_token.start);
             left = assignment;
+        } else if (next_token.type == .Question) {
+            const q_token = try p.consume(.Question);
+            const then_block = try p.parseExpr(0);
+            _ = try p.consume(.Colon);
+            const else_block = try p.parseExpr(try p.getPrecedence(next_token.type));
+            const conditional: *Ast.Expr = .ternaryExpr(p.arena, left, then_block, else_block, q_token.line, q_token.start);
+            left = conditional;
         } else {
             const op_token = try p.consumeAny();
             const op = try p.parseBinaryOperator(op_token.type);
@@ -347,6 +377,7 @@ fn isBinaryOperator(token_type: TokenType) bool {
         .PlusEqual,
         .RightShift,
         .RightShiftEqual,
+        .Question, // hack to get existing system work - maybe ternary is binary :D
         => true,
 
         .Ident,
@@ -362,6 +393,9 @@ fn isBinaryOperator(token_type: TokenType) bool {
         .Return,
         .Semicolon,
         .Void,
+        .If,
+        .Else,
+        .Colon,
         => false,
     };
 }
@@ -413,6 +447,10 @@ fn isCompoundAssignmentOperator(token_type: TokenType) bool {
         .RightShift,
         .Semicolon,
         .Void,
+        .If,
+        .Else,
+        .Question,
+        .Colon,
         => false,
     };
 }
@@ -455,6 +493,7 @@ fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
         .BitOr => 23,
         .And => 10,
         .Or => 5,
+        .Question => 3,
         .Assign,
         .PlusEqual,
         .MinusEqual,
@@ -628,7 +667,33 @@ pub const Ast = struct {
     pub const Stmt = union(enum) {
         Return: struct { expr: *Expr, loc: SourceLocation },
         Expr: struct { expr: *Expr, loc: SourceLocation },
+        If: struct { condition: *Expr, then: *Stmt, @"else": ?*Stmt, loc: SourceLocation },
+        Compound: struct { body: *Block, loc: SourceLocation },
         Null: SourceLocation,
+
+        pub fn compoundStmt(allocator: Allocator, body: *Block, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .Compound = .{
+                    .body = body,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
+
+        pub fn ifStmt(allocator: Allocator, condition: *Expr, then: *Stmt, @"else": ?*Stmt, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .If = .{
+                    .condition = condition,
+                    .then = then,
+                    .@"else" = @"else",
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
 
         pub fn nullStmt(allocator: Allocator, line: usize, start: usize) *Stmt {
             const stmt = allocator.create(Stmt) catch unreachable;
@@ -666,6 +731,20 @@ pub const Ast = struct {
         Assignment: struct { src: *Expr, dst: *Expr, loc: SourceLocation },
         Group: struct { expr: *Expr, loc: SourceLocation },
         Postfix: struct { operator: PostfixOperator, expr: *Expr, loc: SourceLocation },
+        Ternary: struct { condition: *Expr, then: *Expr, @"else": *Expr, loc: SourceLocation },
+
+        pub fn ternaryExpr(allocator: Allocator, condition: *Expr, then: *Expr, @"else": *Expr, line: usize, start: usize) *Expr {
+            const expr = allocator.create(Expr) catch unreachable;
+            expr.* = .{
+                .Ternary = .{
+                    .condition = condition,
+                    .then = then,
+                    .@"else" = @"else",
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return expr;
+        }
 
         pub fn postfixExpr(allocator: Allocator, operator: PostfixOperator, expr: *Expr, line: usize, start: usize) *Expr {
             const postfix_expr = allocator.create(Expr) catch unreachable;
@@ -803,8 +882,9 @@ pub const AstPrinter = struct {
 
     fn printFnDecl(writer: AnyWriter, fn_decl: *const Ast.FnDecl, depth: usize) void {
         printSpace(writer, depth);
-
-        writeFmt(writer, "int {s}(void) {{\n", .{fn_decl.name});
+        writeFmt(writer, "int {s}(void)\n", .{fn_decl.name});
+        printSpace(writer, depth);
+        write(writer, "{\n");
 
         printBlock(writer, fn_decl.body, depth + 1);
 
@@ -843,21 +923,64 @@ pub const AstPrinter = struct {
         write(writer, ";\n");
     }
 
+    fn printIfStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+        const if_stmt = switch (stmt.*) {
+            .If => |if_stmt| if_stmt,
+            else => @panic("** Compiler Bug ** printIfStmt called on non If statement"),
+        };
+        write(writer, "if (");
+        printExpr(writer, if_stmt.condition);
+        write(writer, ")\n");
+        printStmt(writer, if_stmt.then, depth);
+        if (if_stmt.@"else") |else_stmt| {
+            printSpace(writer, depth);
+            write(writer, "else");
+
+            if (else_stmt.* == .If) {
+                write(writer, " ");
+                printIfStmt(writer, else_stmt, depth);
+            } else {
+                write(writer, "\n");
+                printStmt(writer, else_stmt, depth);
+            }
+        }
+    }
+
     fn printStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
         printSpace(writer, depth);
         switch (stmt.*) {
+            .If => {
+                printIfStmt(writer, stmt, depth);
+            },
+            .Compound => |compound_stmt| {
+                write(writer, "{\n");
+                printSpace(writer, depth);
+                printBlock(writer, compound_stmt.body, depth);
+                printSpace(writer, depth);
+                write(writer, "}\n");
+            },
             .Return => |return_stmt| {
                 write(writer, "return");
                 write(writer, " ");
                 printExpr(writer, return_stmt.expr);
+                write(writer, ";\n");
             },
-            .Expr => |expr| printExpr(writer, expr.expr),
-            .Null => write(writer, ";"),
+            .Expr => |expr| {
+                printExpr(writer, expr.expr);
+                write(writer, ";\n");
+            },
+            .Null => write(writer, ";\n"),
         }
-        write(writer, ";\n");
     }
     fn printExpr(writer: AnyWriter, expr: *const Ast.Expr) void {
         switch (expr.*) {
+            .Ternary => |ternary_expr| {
+                printExpr(writer, ternary_expr.condition);
+                write(writer, " ? ");
+                printExpr(writer, ternary_expr.then);
+                write(writer, " : ");
+                printExpr(writer, ternary_expr.@"else");
+            },
             .Var => |var_expr| {
                 writeFmt(writer, "{s}", .{var_expr.ident});
             },
