@@ -122,6 +122,17 @@ fn resolveDecl(s: Self, decl: *Ast.Decl, scope: *ScopeIdents) SemaError!void {
 
 fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
     try switch (stmt.*) {
+        .If => |if_stmt| {
+            try s.resolveExpr(if_stmt.condition, scope);
+            try s.resolveStmt(if_stmt.then, scope);
+            if (if_stmt.@"else") |else_block| {
+                try s.resolveStmt(else_block, scope);
+            }
+        },
+        .Compound => |compound| {
+            var nested_scope = createNewScope(scope);
+            try s.resolveBlock(compound.body, &nested_scope);
+        },
         .Return => |return_stmt| s.resolveExpr(return_stmt.expr, scope),
         .Expr => |expr_stmt| s.resolveExpr(expr_stmt.expr, scope),
         .Null => {}, // noop
@@ -130,6 +141,11 @@ fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
 
 fn resolveExpr(s: Self, expr: *Ast.Expr, scope: *ScopeIdents) SemaError!void {
     switch (expr.*) {
+        .Ternary => |ternary_expr| {
+            try s.resolveExpr(ternary_expr.condition, scope);
+            try s.resolveExpr(ternary_expr.then, scope);
+            try s.resolveExpr(ternary_expr.@"else", scope);
+        },
         .Postfix => |postfix_expr| {
             const inner_expr = recurseGetGroupInnerExpr(postfix_expr.expr);
             if (inner_expr.* != .Var) {
