@@ -70,9 +70,29 @@ fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction))
 
 fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruction)) void {
     switch (stmt.*) {
-        .Expr => |expr_stmt| {
-            _ = s.genExpr(expr_stmt.expr, instructions);
+        .If => |if_stmt| {
+            const if_end_label = s.makeLabel("if_end");
+            const condition = s.genExpr(if_stmt.condition, instructions);
+
+            const else_block = if_stmt.@"else" orelse {
+                instructions.append(.jumpIfZero(condition, if_end_label.Label)) catch unreachable;
+                s.genStmt(if_stmt.then, instructions);
+                instructions.append(if_end_label) catch unreachable;
+                return;
+            };
+            const else_label = s.makeLabel("else");
+            instructions.append(.jumpIfZero(condition, else_label.Label)) catch unreachable;
+
+            s.genStmt(if_stmt.then, instructions);
+            instructions.append(.jump(if_end_label.Label)) catch unreachable;
+
+            instructions.append(else_label) catch unreachable;
+            s.genStmt(else_block, instructions);
+
+            instructions.append(if_end_label) catch unreachable;
         },
+        .Compound => |compound_stmt| s.genBlock(compound_stmt.body, instructions),
+        .Expr => |expr_stmt| _ = s.genExpr(expr_stmt.expr, instructions),
         .Return => |ret| {
             const ret_val = s.genExpr(ret.expr, instructions);
             instructions.append(.ret(ret_val)) catch unreachable;
@@ -82,6 +102,29 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
 }
 pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
+        .Ternary => |ternary_expr| {
+            const dst = s.makeVar();
+
+            const ternary_end = s.makeLabel("ternary_end");
+            const ternary_else = s.makeLabel("ternary_else");
+
+            const condition = s.genExpr(ternary_expr.condition, instructions);
+
+            instructions.append(.jumpIfZero(condition, ternary_else.Label)) catch unreachable;
+
+            // true
+            const then_result = s.genExpr(ternary_expr.then, instructions);
+            instructions.append(.copy(then_result, dst)) catch unreachable;
+            instructions.append(.jump(ternary_end.Label)) catch unreachable;
+
+            // false
+            instructions.append(ternary_else) catch unreachable;
+            const else_result = s.genExpr(ternary_expr.@"else", instructions);
+            instructions.append(.copy(else_result, dst)) catch unreachable;
+
+            instructions.append(ternary_end) catch unreachable;
+            return dst;
+        },
         .Postfix => |postfix| {
             const expr_result = s.genExpr(postfix.expr, instructions);
             const prev_result_var = s.makeVar();
