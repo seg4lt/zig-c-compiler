@@ -152,6 +152,10 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             const body = try p.parseBlock();
             return .compoundStmt(p.arena, body, token.line, token.start);
         },
+        .Semicolon => {
+            _ = try p.consume(.Semicolon);
+            return .nullStmt(p.arena, token.line, token.start);
+        },
         else => {
             const peeked_token = p.peek() orelse {
                 try p.parseError(
@@ -931,7 +935,9 @@ pub const AstPrinter = struct {
         write(writer, "if (");
         printExpr(writer, if_stmt.condition);
         write(writer, ")\n");
-        printStmt(writer, if_stmt.then, depth);
+
+        const if_depth = if (if_stmt.then.* == .Compound) depth else depth + 1;
+        printStmt(writer, if_stmt.then, if_depth);
         if (if_stmt.@"else") |else_stmt| {
             printSpace(writer, depth);
             write(writer, "else");
@@ -941,7 +947,8 @@ pub const AstPrinter = struct {
                 printIfStmt(writer, else_stmt, depth);
             } else {
                 write(writer, "\n");
-                printStmt(writer, else_stmt, depth);
+                const else_depth = if (if_stmt.then.* == .Compound) depth else depth + 1;
+                printStmt(writer, else_stmt, else_depth);
             }
         }
     }
