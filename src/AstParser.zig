@@ -29,7 +29,7 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
     };
 
     if (self.current < self.tokens.len) {
-        const last_token = self.peek() orelse unreachable;
+        const last_token = self.peek();
         self.parseError(
             ParseError.UnexpectedToken,
             "Unexpected token `{s}` << {s} >> at end of input",
@@ -75,8 +75,7 @@ fn parseBlock(p: *Self) ParseError!*Ast.Block {
     const start_token = try p.consume(.LCurly);
     var body = ArrayList(*Ast.BlockItem).init(p.arena);
 
-    while (p.peek()) |token| {
-        if (token.type == .RCurly) break;
+    while (p.peek().type != .RCurly) {
         const item = try p.parseBlockItem();
         body.append(item) catch unreachable;
     }
@@ -85,13 +84,7 @@ fn parseBlock(p: *Self) ParseError!*Ast.Block {
 }
 
 fn parseBlockItem(p: *Self) ParseError!*Ast.BlockItem {
-    const peek_token = p.peek() orelse {
-        try p.parseError(
-            ParseError.StatementExpected,
-            "Unexpected end of input while parsing block item",
-            .{},
-        );
-    };
+    const peek_token = p.peek();
     return switch (peek_token.type) {
         .Int => .decl(p.arena, try p.parseDecl()),
         .Semicolon => {
@@ -103,10 +96,8 @@ fn parseBlockItem(p: *Self) ParseError!*Ast.BlockItem {
 }
 
 fn parseDecl(p: *Self) ParseError!*Ast.Decl {
+    const token = p.peek();
     // We only support `int` at the moment
-    const token = p.peek() orelse {
-        try p.parseError(ParseError.MissingToken, "expected decl `int`", .{});
-    };
     if (token.type != .Int) {
         try p.parseError(ParseError.UnexpectedToken, "expected int found `{s}` << {s} >> ", .{ token.lexeme, @tagName(token.type) });
     }
@@ -119,11 +110,9 @@ fn parseDecl(p: *Self) ParseError!*Ast.Decl {
     }
 
     var var_initializer: ?*Ast.Expr = null;
-    if (p.peek()) |peeked_token| {
-        if (peeked_token.type == .Assign) {
-            _ = try p.consumeAny();
-            var_initializer = try p.parseExpr(0);
-        }
+    if (p.peek().type == .Assign) {
+        _ = try p.consumeAny();
+        var_initializer = try p.parseExpr(0);
     }
     _ = try p.consume(.Semicolon);
     return .variableDecl(p.arena, ident, var_initializer, ident_token.line, ident_token.start);
@@ -131,20 +120,12 @@ fn parseDecl(p: *Self) ParseError!*Ast.Decl {
 
 fn parseFnParams(p: *Self) ParseError!void {
     _ = try p.consume(.LParen);
-    if (p.peek()) |token| {
-        if (token.type == .Void) _ = try p.consume(.Void);
-    }
+    if (p.peek().type == .Void) _ = try p.consume(.Void);
     _ = try p.consume(.RParen);
 }
 
 fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
-    const token = p.peek() orelse {
-        try p.parseError(
-            ParseError.StatementExpected,
-            "Unexpected end of input while parsing statement",
-            .{},
-        );
-    };
+    const token = p.peek();
     return switch (token.type) {
         .Return => try p.parseReturnStmt(),
         .If => try p.parseIfStmt(),
@@ -163,17 +144,10 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             return .nullStmt(p.arena, token.line, token.start);
         },
         else => {
-            const peeked_token = p.peek() orelse {
-                try p.parseError(
-                    ParseError.StatementExpected,
-                    "Unexpected token while parsing statement `{s}` << {s} >>",
-                    .{ token.lexeme, @tagName(token.type) },
-                );
-            };
-
-            // .Label
+            const peeked_token = p.peek();
             const next_token = p.peekOffset(1);
-            if (peeked_token.type == .Ident and next_token != null and next_token.?.type == .Colon) {
+            if (peeked_token.type == .Ident and next_token.type == .Colon) {
+                // .Label
                 const ident_token = try p.consume(.Ident);
                 _ = try p.consume(.Colon);
                 const label_stmt = try p.parseStmt();
@@ -196,11 +170,9 @@ fn parseIfStmt(p: *Self) ParseError!*Ast.Stmt {
     const then_block = try p.parseStmt();
 
     var else_block: ?*Ast.Stmt = null;
-    if (p.peek()) |token| {
-        if (token.type == .Else) {
-            _ = try p.consume(.Else);
-            else_block = try p.parseStmt();
-        }
+    if (p.peek().type == .Else) {
+        _ = try p.consume(.Else);
+        else_block = try p.parseStmt();
     }
     return .ifStmt(p.arena, condition, then_block, else_block, if_token.line, if_token.start);
 }
@@ -213,13 +185,7 @@ fn parseReturnStmt(p: *Self) ParseError!*Ast.Stmt {
 }
 
 fn parseFactor(p: *Self) ParseError!*Ast.Expr {
-    const token = p.peek() orelse {
-        try p.parseError(
-            ParseError.UnexpectedEndOfToken,
-            "Unexpected end of input while parsing factor",
-            .{},
-        );
-    };
+    const token = p.peek();
     switch (token.type) {
         .IntLiteral => {
             const int_literal = try p.consume(.IntLiteral);
@@ -263,7 +229,10 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             const prefix_op: Ast.BinaryOperator = switch (op_token.type) {
                 .MinusMinus => .Subtract,
                 .PlusPlus => .Add,
-                else => @panic("** Compiler Bug ** only prefix operator should be evaluated"),
+                else => std.debug.panic(
+                    "** Compiler Bug ** only prefix operator should be evaluated, found `{s}` << {s} >>",
+                    .{ op_token.lexeme, @tagName(op_token.type) },
+                ),
             };
             const binary: *Ast.Expr = .binaryExpr(p.arena, prefix_op, new_var, one, op_token.line, op_token.start);
             return .assignmentExpr(p.arena, binary, new_var_clone, op_token.line, op_token.start);
@@ -289,9 +258,8 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
 }
 
 fn parsePostfixExpr(p: *Self, expr: *Ast.Expr) ParseError!*Ast.Expr {
-    const peeked_token = p.peek() orelse {
-        return expr;
-    };
+    const peeked_token = p.peek();
+
     if (peeked_token.type != .MinusMinus and peeked_token.type != .PlusPlus) {
         return expr;
     }
@@ -309,7 +277,10 @@ fn parsePostfixExpr(p: *Self, expr: *Ast.Expr) ParseError!*Ast.Expr {
     const postfix_op: Ast.PostfixOperator = switch (postfix_op_token.type) {
         .MinusMinus => .Subtract,
         .PlusPlus => .Add,
-        else => @panic("** Compiler Bug ** only prefix operator should be evaluated"),
+        else => std.debug.panic(
+            "** Compiler Bug ** only prefix operator should be evaluated. found `{s}` << {s} >>",
+            .{ postfix_op_token.lexeme, @tagName(postfix_op_token.type) },
+        ),
     };
     const postfix_expr: *Ast.Expr = .postfixExpr(p.arena, postfix_op, expr, postfix_op_token.line, postfix_op_token.start);
     return p.parsePostfixExpr(postfix_expr);
@@ -317,31 +288,18 @@ fn parsePostfixExpr(p: *Self, expr: *Ast.Expr) ParseError!*Ast.Expr {
 
 fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
     var left = try p.parseFactor();
+    var peeked_token = p.peek();
 
-    // @note - maybe peek should always return EOF token so I don't have to do null checks? Maybe lexer should always add EOF token at the end
-    while (true) {
-        const next_token = p.peek() orelse {
-            try p.parseError(
-                ParseError.StatementExpected,
-                "Unexpected end of input while parsing expression",
-                .{},
-            );
-        };
-        const continue_expr_parse = isBinaryOperator(next_token.type) and try p.getPrecedence(next_token.type) >= min_prec;
-
-        if (!continue_expr_parse) {
-            break;
-        }
-
-        if (next_token.type == .Assign) {
+    while (isBinaryOperator(peeked_token) and getPrecedence(peeked_token) >= min_prec) {
+        if (peeked_token.type == .Assign) {
             const assignment_token = try p.consume(.Assign);
-            const right = try p.parseExpr(try p.getPrecedence(assignment_token.type));
+            const right = try p.parseExpr(getPrecedence(assignment_token));
             const assignment: *Ast.Expr = .assignmentExpr(p.arena, right, left, assignment_token.line, assignment_token.start);
             left = assignment;
-        } else if (isCompoundAssignmentOperator(next_token.type)) {
+        } else if (isCompoundAssignmentOperator(peeked_token)) {
             const op_token = try p.consumeAny();
             const op = try p.parseBinaryOperator(op_token.type);
-            const right = try p.parseExpr(try p.getPrecedence(next_token.type));
+            const right = try p.parseExpr(getPrecedence(peeked_token));
 
             // cloning here because on sema phase we replace variable identifier
             // if we use same pointer, it will look for updated name on our map which is wrong
@@ -351,26 +309,27 @@ fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
             const binary: *Ast.Expr = .binaryExpr(p.arena, op, left_clone, right, op_token.line, op_token.start);
             const assignment: *Ast.Expr = .assignmentExpr(p.arena, binary, left, op_token.line, op_token.start);
             left = assignment;
-        } else if (next_token.type == .Question) {
+        } else if (peeked_token.type == .Question) {
             const q_token = try p.consume(.Question);
             const then_block = try p.parseExpr(0);
             _ = try p.consume(.Colon);
-            const else_block = try p.parseExpr(try p.getPrecedence(next_token.type));
+            const else_block = try p.parseExpr(getPrecedence(peeked_token));
             const conditional: *Ast.Expr = .ternaryExpr(p.arena, left, then_block, else_block, q_token.line, q_token.start);
             left = conditional;
         } else {
             const op_token = try p.consumeAny();
             const op = try p.parseBinaryOperator(op_token.type);
-            const right = try p.parseExpr(try p.getPrecedence(next_token.type) + 1);
+            const right = try p.parseExpr(getPrecedence(peeked_token) + 1);
             const binary: *Ast.Expr = .binaryExpr(p.arena, op, left, right, op_token.line, op_token.start);
             left = binary;
         }
+        peeked_token = p.peek();
     }
     return left;
 }
 
-fn isBinaryOperator(token_type: TokenType) bool {
-    return switch (token_type) {
+fn isBinaryOperator(token: *const Token) bool {
+    return switch (token.type) {
         .And,
         .Assign,
         .BitAnd,
@@ -404,6 +363,7 @@ fn isBinaryOperator(token_type: TokenType) bool {
         .Question, // hack to get existing system work - maybe ternary is binary :D
         => true,
 
+        .Eof,
         .Ident,
         .Int,
         .IntLiteral,
@@ -425,8 +385,8 @@ fn isBinaryOperator(token_type: TokenType) bool {
     };
 }
 
-fn isCompoundAssignmentOperator(token_type: TokenType) bool {
-    return switch (token_type) {
+fn isCompoundAssignmentOperator(token: *const Token) bool {
+    return switch (token.type) {
         .BitAndEqual,
         .BitOrEqual,
         .BitXorEqual,
@@ -439,6 +399,7 @@ fn isCompoundAssignmentOperator(token_type: TokenType) bool {
         .RightShiftEqual,
         => true,
 
+        .Eof,
         .And,
         .Assign,
         .BitAnd,
@@ -506,8 +467,8 @@ fn parseBinaryOperator(p: Self, token_type: TokenType) ParseError!Ast.BinaryOper
     };
 }
 
-fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
-    return switch (token_type) {
+fn getPrecedence(token: *const Token) usize {
+    return switch (token.type) {
         .BitNot => 70,
         .Divide, .Multiply, .Mod => 50,
         .Minus, .Plus => 45,
@@ -533,10 +494,9 @@ fn getPrecedence(p: Self, token_type: TokenType) ParseError!usize {
         .RightShiftEqual,
         => 1,
 
-        else => try p.parseError(
-            ParseError.CompilerBug,
-            "** Compiler Bug ** precedence level asked for something that doesn't support precendence << {s} >>",
-            .{@tagName(token_type)},
+        else => std.debug.panic(
+            "** Compiler Bug ** precedence level asked for something that doesn't support precendence `{s}` << {s} >>",
+            .{ token.lexeme, @tagName(token.type) },
         ),
     };
 }
@@ -555,12 +515,7 @@ fn parseUnaryOperator(p: Self, token_type: TokenType) ParseError!Ast.UnaryOperat
 }
 
 fn parseError(p: Self, e: ParseError, comptime fmt: []const u8, args: anytype) ParseError!noreturn {
-    const token = p.peek() orelse {
-        // If we reach here, it means we are at the end of input.
-        // We can report the error without a token.
-        p.error_reporter.addError(0, 0, fmt, args);
-        return e;
-    };
+    const token = p.peek();
     try parseErrorOnToken(p, e, token, fmt, args);
 }
 
@@ -571,23 +526,19 @@ fn parseErrorOnToken(p: Self, e: ParseError, token: *const Token, comptime fmt: 
 
 fn consumeAny(p: *Self) ParseError!*const Token {
     defer p.current += 1;
-    return p.peek() orelse {
+    const token = p.peek();
+    if (token.type == .Eof) {
         try p.parseError(
             ParseError.UnexpectedToken,
             "Unexpected end of input while consuming any token",
             .{},
         );
-    };
+    }
+    return token;
 }
 
 fn consume(p: *Self, expected: TokenType) ParseError!*const Token {
-    const tok = p.peek() orelse {
-        try p.parseError(
-            ParseError.UnexpectedToken,
-            "Unexpected end of input while consuming token",
-            .{},
-        );
-    };
+    const tok = p.peek();
     if (tok.type != expected) {
         try p.parseError(
             ParseError.UnexpectedToken,
@@ -599,12 +550,19 @@ fn consume(p: *Self, expected: TokenType) ParseError!*const Token {
     return tok;
 }
 
-fn peek(p: Self) ?*const Token {
+const EOF_TOKEN: Token = .{
+    .type = .Eof,
+    .lexeme = "",
+    .line = 0,
+    .start = 0,
+};
+
+fn peek(p: Self) *const Token {
     return p.peekOffset(0);
 }
 
-fn peekOffset(p: Self, offset: i8) ?*const Token {
-    if (p.isAtEnd()) return null;
+fn peekOffset(p: Self, offset: i8) *const Token {
+    if (p.isAtEnd()) return &EOF_TOKEN;
     return &p.tokens[p.current + @as(usize, @intCast(offset))];
 }
 
@@ -690,6 +648,8 @@ pub const Ast = struct {
             return fn_decl;
         }
     };
+    // @note - all type need SourceLocation, instead of tagged union should I have use normal union type?
+    // That way I can easily get souce location in places where I need to display error with correct line on guard clause
     pub const Stmt = union(enum) {
         Return: struct { expr: *Expr, loc: SourceLocation },
         Expr: struct { expr: *Expr, loc: SourceLocation },
@@ -977,7 +937,10 @@ pub const AstPrinter = struct {
     fn printIfStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
         const if_stmt = switch (stmt.*) {
             .If => |if_stmt| if_stmt,
-            else => @panic("** Compiler Bug ** printIfStmt called on non If statement"),
+            else => std.debug.panic(
+                "** Compiler Bug ** printIfStmt called on non If statement",
+                .{},
+            ),
         };
         write(writer, "if (");
         printExpr(writer, if_stmt.condition);

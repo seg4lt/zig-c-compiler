@@ -413,7 +413,10 @@ pub const TokenType = enum {
     Void,
     If,
     Else,
-    Goto
+    Goto,
+
+    // Special
+    Eof,
 };
 
 const std = @import("std");
