@@ -8,14 +8,21 @@ pub const SemaOptions = struct {
 };
 
 pub const SemaError = error{
+    UndeclaredLabel,
+    DuplicateLabel,
     DuplicateIdentifier,
     UndeclaredVariable,
-    InvalidLValue
+    InvalidLValue,
 } || CompilerError;
 
 pub fn makeVar(allocator: Allocator, random: std.Random, name: []const u8) []const u8 {
     const random_int = random.int(u16);
     return std.fmt.allocPrint(allocator, "var_{s}___{d}", .{ name, random_int }) catch unreachable;
+}
+
+pub fn makeGotoLabel(allocator: Allocator, random: std.Random, name: []const u8) []const u8 {
+    const random_int = random.int(u16);
+    return std.fmt.allocPrint(allocator, "goto_label_{s}___{d}", .{ name, random_int }) catch unreachable;
 }
 
 const std = @import("std");

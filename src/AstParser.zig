@@ -152,6 +152,12 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             const body = try p.parseBlock();
             return .compoundStmt(p.arena, body, token.line, token.start);
         },
+        .Goto => {
+            _ = try p.consumeAny();
+            const goto_ident = try p.consume(.Ident);
+            _ = try p.consume(.Semicolon);
+            return .gotoStmt(p.arena, goto_ident.lexeme, token.line, token.start);
+        },
         .Semicolon => {
             _ = try p.consume(.Semicolon);
             return .nullStmt(p.arena, token.line, token.start);
@@ -164,6 +170,16 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
                     .{ token.lexeme, @tagName(token.type) },
                 );
             };
+
+            // .Label
+            const next_token = p.peekOffset(1);
+            if (peeked_token.type == .Ident and next_token != null and next_token.?.type == .Colon) {
+                const ident_token = try p.consume(.Ident);
+                _ = try p.consume(.Colon);
+                const label_stmt = try p.parseStmt();
+                return .labelStmt(p.arena, ident_token.lexeme, label_stmt, ident_token.line, ident_token.start);
+            }
+
             const expr = try p.parseExpr(0);
             _ = try p.consume(.Semicolon);
             return .exprStmt(p.arena, expr, peeked_token.line, peeked_token.start);
@@ -222,6 +238,9 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             const inner_expr = try p.parseFactor();
             return .unaryExpr(p.arena, operator, inner_expr, op_token.line, op_token.start);
         },
+        // @todo - Maybe this should be handled like postfix
+        // With this rewrite here, I am losing that I have prefix incr/decr operator
+        // Works but code format/print doesn't look exactly same
         .MinusMinus, .PlusPlus => {
             const op_token = try p.consumeAny();
             var var_expr = try p.parseFactor();
@@ -299,6 +318,7 @@ fn parsePostfixExpr(p: *Self, expr: *Ast.Expr) ParseError!*Ast.Expr {
 fn parseExpr(p: *Self, min_prec: usize) ParseError!*Ast.Expr {
     var left = try p.parseFactor();
 
+    // @note - maybe peek should always return EOF token so I don't have to do null checks? Maybe lexer should always add EOF token at the end
     while (true) {
         const next_token = p.peek() orelse {
             try p.parseError(
@@ -400,6 +420,7 @@ fn isBinaryOperator(token_type: TokenType) bool {
         .If,
         .Else,
         .Colon,
+        .Goto,
         => false,
     };
 }
@@ -455,6 +476,7 @@ fn isCompoundAssignmentOperator(token_type: TokenType) bool {
         .Else,
         .Question,
         .Colon,
+        .Goto,
         => false,
     };
 }
@@ -673,7 +695,32 @@ pub const Ast = struct {
         Expr: struct { expr: *Expr, loc: SourceLocation },
         If: struct { condition: *Expr, then: *Stmt, @"else": ?*Stmt, loc: SourceLocation },
         Compound: struct { body: *Block, loc: SourceLocation },
+        Goto: struct { ident: []const u8, loc: SourceLocation },
+        Label: struct { ident: []const u8, stmt: *Stmt, loc: SourceLocation },
         Null: SourceLocation,
+
+        pub fn labelStmt(allocator: Allocator, ident: []const u8, stmt: *Stmt, line: usize, start: usize) *Stmt {
+            const label_stmt = allocator.create(Stmt) catch unreachable;
+            label_stmt.* = .{
+                .Label = .{
+                    .ident = ident,
+                    .stmt = stmt,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return label_stmt;
+        }
+
+        pub fn gotoStmt(allocator: Allocator, ident: []const u8, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .Goto = .{
+                    .ident = ident,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
 
         pub fn compoundStmt(allocator: Allocator, body: *Block, line: usize, start: usize) *Stmt {
             const stmt = allocator.create(Stmt) catch unreachable;
@@ -956,6 +1003,13 @@ pub const AstPrinter = struct {
     fn printStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
         printSpace(writer, depth);
         switch (stmt.*) {
+            .Label => |label_stmt| {
+                writeFmt(writer, "{s}:\n", .{label_stmt.ident});
+                printStmt(writer, label_stmt.stmt, depth + 1);
+            },
+            .Goto => |goto_stmt| {
+                writeFmt(writer, "goto {s};\n", .{goto_stmt.ident});
+            },
             .If => {
                 printIfStmt(writer, stmt, depth);
             },

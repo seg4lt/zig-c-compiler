@@ -122,6 +122,9 @@ fn resolveDecl(s: Self, decl: *Ast.Decl, scope: *ScopeIdents) SemaError!void {
 
 fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
     try switch (stmt.*) {
+        .Label => |label_stmt| {
+            try s.resolveStmt(label_stmt.stmt, scope);
+        },
         .If => |if_stmt| {
             try s.resolveExpr(if_stmt.condition, scope);
             try s.resolveStmt(if_stmt.then, scope);
@@ -135,7 +138,7 @@ fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
         },
         .Return => |return_stmt| s.resolveExpr(return_stmt.expr, scope),
         .Expr => |expr_stmt| s.resolveExpr(expr_stmt.expr, scope),
-        .Null => {}, // noop
+        .Goto, .Null => {}, // noop
     };
 }
 

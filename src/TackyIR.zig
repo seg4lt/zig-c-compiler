@@ -70,6 +70,17 @@ fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction))
 
 fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruction)) void {
     switch (stmt.*) {
+        .Label => |label_stmt| {
+            const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{label_stmt.ident}) catch unreachable;
+            const label: Tac.Instruction = .label(owned_ident);
+
+            instructions.append(label) catch unreachable;
+            s.genStmt(label_stmt.stmt, instructions);
+        },
+        .Goto => |goto_stmt| {
+            const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{goto_stmt.ident}) catch unreachable;
+            instructions.append(.jump(owned_ident)) catch unreachable;
+        },
         .If => |if_stmt| {
             const if_end_label = s.makeLabel("if_end");
             const condition = s.genExpr(if_stmt.condition, instructions);
@@ -253,12 +264,14 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
         .Group => |group| s.genExpr(group.expr, instructions),
     };
 }
+
 pub fn makeVar(s: *Self) Tac.Val {
     defer s.var_count += 1;
     const var_name = std.fmt.allocPrint(s.arena, "tmp.{d}", .{s.var_count}) catch unreachable;
     return .variable(var_name);
 }
-pub fn makeLabel(s: *Self, comptime label: []const u8) Tac.Instruction {
+
+pub fn makeLabel(s: *Self, label: []const u8) Tac.Instruction {
     defer s.label_count += 1;
     const label_name = std.fmt.allocPrint(s.arena, "L_{s}_{d}", .{ label, s.label_count }) catch unreachable;
     return .label(label_name);

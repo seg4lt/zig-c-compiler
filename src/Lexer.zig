@@ -327,6 +327,7 @@ fn getTokenType(lexeme: []const u8) TokenType {
     if (std.mem.eql(u8, "return", lexeme)) return .Return;
     if (std.mem.eql(u8, "if", lexeme)) return .If;
     if (std.mem.eql(u8, "else", lexeme)) return .Else;
+    if (std.mem.eql(u8, "goto", lexeme)) return .Goto;
     return .Ident;
 }
 
@@ -412,6 +413,7 @@ pub const TokenType = enum {
     Void,
     If,
     Else,
+    Goto
 };
 
 const std = @import("std");

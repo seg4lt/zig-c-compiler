@@ -1,6 +1,9 @@
 pub fn sema(opt: SemaOptions) SemaError!void {
     try SemaIdentResolution.resolve(opt);
     if (opt.print_ast) print(opt, "Sema Phase: Ident Resolution");
+
+    try SemaGotoResolution.resolve(opt);
+    if (opt.print_ast) print(opt, "Sema Phase: Goto Resolution");
 }
 
 fn print(opt: SemaOptions, label: []const u8) void {
@@ -22,3 +25,4 @@ const AstPrinter = @import("../AstParser.zig").AstPrinter;
 const CompilerError = @import("../util.zig").CompilerError;
 const Allocator = std.mem.Allocator;
 const SemaIdentResolution = @import("SemaIdentResolution.zig");
+const SemaGotoResolution = @import("SemaGotoResolution.zig");
