@@ -70,6 +70,11 @@ fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction))
 
 fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruction)) void {
     switch (stmt.*) {
+        .Break => @panic("not implemented"),
+        .Continue => @panic("not implemented"),
+        .DoWhile => @panic("not implemented"),
+        .While => @panic("not implemented"),
+        .For => @panic("not implemented"),
         .Label => |label_stmt| {
             const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{label_stmt.ident}) catch unreachable;
             const label: Tac.Instruction = .label(owned_ident);

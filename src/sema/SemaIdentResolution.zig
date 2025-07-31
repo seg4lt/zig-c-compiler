@@ -122,6 +122,11 @@ fn resolveDecl(s: Self, decl: *Ast.Decl, scope: *ScopeIdents) SemaError!void {
 
 fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
     try switch (stmt.*) {
+        .Break => @panic("not implemented"),
+        .Continue => @panic("not implemented"),
+        .DoWhile => @panic("not implemented"),
+        .While => @panic("not implemented"),
+        .For => @panic("not implemented"),
         .Label => |label_stmt| {
             try s.resolveStmt(label_stmt.stmt, scope);
         },

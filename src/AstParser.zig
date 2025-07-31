@@ -139,6 +139,20 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             _ = try p.consume(.Semicolon);
             return .gotoStmt(p.arena, goto_ident.lexeme, token.line, token.start);
         },
+        .Break => {
+            _ = try p.consume(.Break);
+            const break_stmt: *Ast.Stmt = .breakStmt(p.arena, null, token.line, token.start);
+            _ = try p.consume(.Semicolon);
+            return break_stmt;
+        },
+        .Continue => {
+            _ = try p.consume(.Continue);
+            _ = try p.consume(.Semicolon);
+            return .continueStmt(p.arena, null, token.line, token.start);
+        },
+        .Do => try p.parseDoWhileStmt(),
+        .While => try p.parseWhileStmt(),
+        .For => try p.parseForStmt(),
         .Semicolon => {
             _ = try p.consume(.Semicolon);
             return .nullStmt(p.arena, token.line, token.start);
@@ -159,6 +173,70 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             return .exprStmt(p.arena, expr, peeked_token.line, peeked_token.start);
         },
     };
+}
+
+fn parseForStmt(p: *Self) ParseError!*Ast.Stmt {
+    const for_token = try p.consume(.For);
+
+    _ = try p.consume(.LParen);
+    const for_init = try p.parseForInit();
+    if (for_init.* == .Expr) _ = try p.consume(.Semicolon);
+    const condition = try p.parseOptionalExpr(0);
+    _ = try p.consume(.Semicolon);
+    const post_expr: ?*Ast.Expr = if (p.peek().type == .RParen) null else try p.parseExpr(0);
+    _ = try p.consume(.RParen);
+
+    const body = try p.parseStmt();
+
+    return .forStmt(p.arena, for_init, condition, post_expr, body, null, for_token.line, for_token.start);
+}
+
+fn parseForInit(p: *Self) ParseError!*Ast.ForInit {
+    const peeked_token = p.peek();
+    if (peeked_token.type == .Int) {
+        const decl = try p.parseDecl();
+        if (decl.* != .Var) {
+            try p.parseError(
+                ParseError.UnexpectedToken,
+                "Expected variable declaration in for loop init, found `{s}` << {any} >>",
+                .{ @tagName(decl.*), decl.* },
+            );
+        }
+        return .decl(p.arena, decl);
+    }
+    const expr: ?*Ast.Expr = try p.parseOptionalExpr(0);
+    return .expr(p.arena, expr);
+}
+
+fn parseOptionalExpr(p: *Self, min_prec: usize) ParseError!?*Ast.Expr {
+    if (p.peek().type == .Semicolon) return null;
+    return p.parseExpr(min_prec);
+}
+
+fn parseWhileStmt(p: *Self) ParseError!*Ast.Stmt {
+    const while_token = try p.consume(.While);
+
+    _ = try p.consume(.LParen);
+    const condition = try p.parseExpr(0);
+    _ = try p.consume(.RParen);
+
+    const body = try p.parseStmt();
+    return .whileStmt(p.arena, condition, body, null, while_token.line, while_token.start);
+}
+
+fn parseDoWhileStmt(p: *Self) ParseError!*Ast.Stmt {
+    const do_token = try p.consume(.Do);
+    const body = try p.parseStmt();
+
+    _ = try p.consume(.While);
+
+    _ = try p.consume(.LParen);
+    const condition = try p.parseExpr(0);
+    _ = try p.consume(.RParen);
+
+    _ = try p.consume(.Semicolon);
+
+    return .doWhileStmt(p.arena, body, condition, null, do_token.line, do_token.start);
 }
 
 fn parseIfStmt(p: *Self) ParseError!*Ast.Stmt {
@@ -381,6 +459,11 @@ fn isBinaryOperator(token: *const Token) bool {
         .Else,
         .Colon,
         .Goto,
+        .Do,
+        .While,
+        .For,
+        .Break,
+        .Continue,
         => false,
     };
 }
@@ -438,6 +521,11 @@ fn isCompoundAssignmentOperator(token: *const Token) bool {
         .Question,
         .Colon,
         .Goto,
+        .Do,
+        .While,
+        .For,
+        .Break,
+        .Continue,
         => false,
     };
 }
@@ -649,7 +737,7 @@ pub const Ast = struct {
         }
     };
     // @note - all type need SourceLocation, instead of tagged union should I have use normal union type?
-    // That way I can easily get souce location in places where I need to display error with correct line on guard clause
+    // That way I can easily get source location in places where I need to display error with correct line on guard clause
     pub const Stmt = union(enum) {
         Return: struct { expr: *Expr, loc: SourceLocation },
         Expr: struct { expr: *Expr, loc: SourceLocation },
@@ -657,7 +745,75 @@ pub const Ast = struct {
         Compound: struct { body: *Block, loc: SourceLocation },
         Goto: struct { ident: []const u8, loc: SourceLocation },
         Label: struct { ident: []const u8, stmt: *Stmt, loc: SourceLocation },
+        Break: struct { ident: ?[]const u8, loc: SourceLocation },
+        Continue: struct { ident: ?[]const u8, loc: SourceLocation },
+        DoWhile: struct { body: *Stmt, condition: *Expr, label: ?[]const u8, loc: SourceLocation },
+        While: struct { condition: *Expr, body: *Stmt, label: ?[]const u8, loc: SourceLocation },
+        For: struct { init: *ForInit, condition: ?*Expr, post: ?*Expr, body: *Stmt, label: ?[]const u8, loc: SourceLocation },
         Null: SourceLocation,
+
+        pub fn forStmt(allocator: Allocator, init: *ForInit, condition: ?*Expr, post: ?*Expr, body: *Stmt, label: ?[]const u8, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .For = .{
+                    .init = init,
+                    .condition = condition,
+                    .post = post,
+                    .body = body,
+                    .label = label,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
+
+        pub fn whileStmt(allocator: Allocator, condition: *Expr, body: *Stmt, label: ?[]const u8, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .While = .{
+                    .condition = condition,
+                    .body = body,
+                    .label = label,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
+
+        pub fn doWhileStmt(allocator: Allocator, body: *Stmt, condition: *Expr, label: ?[]const u8, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .DoWhile = .{
+                    .body = body,
+                    .condition = condition,
+                    .label = label,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
+
+        pub fn continueStmt(allocator: Allocator, ident: ?[]const u8, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .Continue = .{
+                    .ident = ident,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
+
+        pub fn breakStmt(allocator: Allocator, ident: ?[]const u8, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .Break = .{
+                    .ident = ident,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
 
         pub fn labelStmt(allocator: Allocator, ident: []const u8, stmt: *Stmt, line: usize, start: usize) *Stmt {
             const label_stmt = allocator.create(Stmt) catch unreachable;
@@ -734,6 +890,23 @@ pub const Ast = struct {
             return stmt;
         }
     };
+
+    pub const ForInit = union(enum) {
+        Decl: *Decl,
+        Expr: ?*Expr,
+
+        pub fn decl(allocator: Allocator, decl_initializer: *Decl) *ForInit {
+            const init = allocator.create(ForInit) catch unreachable;
+            init.* = .{ .Decl = decl_initializer };
+            return init;
+        }
+        pub fn expr(allocator: Allocator, expr_initializer: ?*Expr) *ForInit {
+            const init = allocator.create(ForInit) catch unreachable;
+            init.* = .{ .Expr = expr_initializer };
+            return init;
+        }
+    };
+
     pub const Expr = union(enum) {
         Constant: struct { value: i64, loc: SourceLocation },
         Var: struct { ident: []const u8, loc: SourceLocation },
@@ -897,41 +1070,42 @@ pub const AstPrinter = struct {
         printSpace(writer, depth);
         write(writer, "{\n");
 
-        printBlock(writer, fn_decl.body, depth + 1);
+        printBlock(writer, fn_decl.body, depth + 1, true);
 
         printSpace(writer, depth);
         write(writer, "}");
     }
 
-    fn printBlock(writer: AnyWriter, block: *const Ast.Block, depth: usize) void {
+    fn printBlock(writer: AnyWriter, block: *const Ast.Block, depth: usize, new_line: bool) void {
         for (block.block_item.items) |item| {
-            printBlockItem(writer, item, depth);
+            printSpace(writer, depth);
+            printBlockItem(writer, item, depth, new_line);
         }
     }
 
-    fn printBlockItem(writer: AnyWriter, block_item: *const Ast.BlockItem, depth: usize) void {
+    fn printBlockItem(writer: AnyWriter, block_item: *const Ast.BlockItem, depth: usize, new_line: bool) void {
         switch (block_item.*) {
             .Stmt => |stmt| printStmt(writer, stmt, depth),
-            .Decl => |decl| printDecl(writer, decl, depth),
+            .Decl => |decl| printDecl(writer, decl, depth, new_line),
         }
     }
 
-    fn printDecl(writer: AnyWriter, decl: *const Ast.Decl, depth: usize) void {
+    fn printDecl(writer: AnyWriter, decl: *const Ast.Decl, depth: usize, new_line: bool) void {
         switch (decl.*) {
             .Fn => |fn_decl| printFnDecl(writer, fn_decl, depth),
-            .Var => |var_decl| printVarDecl(writer, var_decl, depth),
+            .Var => |var_decl| printVarDecl(writer, var_decl, depth, new_line),
         }
     }
 
-    fn printVarDecl(writer: AnyWriter, var_decl: *const Ast.VarDecl, depth: usize) void {
-        printSpace(writer, depth);
+    fn printVarDecl(writer: AnyWriter, var_decl: *const Ast.VarDecl, depth: usize, new_line: bool) void {
+        _ = depth;
         write(writer, "int ");
         writeFmt(writer, "{s}", .{var_decl.ident});
         if (var_decl.init) |initializer| {
             write(writer, " = ");
             printExpr(writer, initializer);
         }
-        write(writer, ";\n");
+        if (new_line) write(writer, ";\n");
     }
 
     fn printIfStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
@@ -947,25 +1121,108 @@ pub const AstPrinter = struct {
         write(writer, ")\n");
 
         const if_depth = if (if_stmt.then.* == .Compound) depth else depth + 1;
+        printSpace(writer, if_depth);
         printStmt(writer, if_stmt.then, if_depth);
         if (if_stmt.@"else") |else_stmt| {
+            if (if_stmt.then.* == .Compound) {
+                write(writer, "\n");
+            }
             printSpace(writer, depth);
             write(writer, "else");
-
             if (else_stmt.* == .If) {
                 write(writer, " ");
                 printIfStmt(writer, else_stmt, depth);
             } else {
                 write(writer, "\n");
                 const else_depth = if (if_stmt.then.* == .Compound) depth else depth + 1;
+                printSpace(writer, else_depth);
                 printStmt(writer, else_stmt, else_depth);
             }
         }
+        write(writer, "\n");
+    }
+
+    fn printDoWhileStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+        const do_stmt = switch (stmt.*) {
+            .DoWhile => |do_while| do_while,
+            else => std.debug.panic(
+                "** Compiler Bug ** printDoWhileStmt called on non doWhile statement",
+                .{},
+            ),
+        };
+        write(writer, "do\n");
+        printSpace(writer, depth);
+        const do_depth = if (do_stmt.body.* == .Compound) depth else depth + 1;
+        printStmt(writer, do_stmt.body, do_depth);
+        write(writer, " while ( ");
+        printExpr(writer, do_stmt.condition);
+        write(writer, " );\n");
+    }
+
+    fn printWhileStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+        const while_stmt = switch (stmt.*) {
+            .While => |while_stmt_| while_stmt_,
+            else => std.debug.panic(
+                "** Compiler Bug ** whileStmt called on non while statement",
+                .{},
+            ),
+        };
+        write(writer, "while ( ");
+        printExpr(writer, while_stmt.condition);
+        write(writer, " )\n");
+
+        const while_depth = if (while_stmt.body.* == .Compound) depth else depth + 1;
+
+        printSpace(writer, depth);
+        printStmt(writer, while_stmt.body, while_depth);
+        write(writer, "\n");
+    }
+
+    fn printForStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+        const for_stmt = switch (stmt.*) {
+            .For => |for_stmt_| for_stmt_,
+            else => std.debug.panic(
+                "** Compiler Bug ** printForStmt called on non for statement",
+                .{},
+            ),
+        };
+        write(writer, "for (");
+        switch (for_stmt.init.*) {
+            .Decl => |decl| printDecl(writer, decl, depth + 1, false),
+            .Expr => |expr| if (expr) |initializer| printExpr(writer, initializer),
+        }
+        write(writer, " ; ");
+
+        if (for_stmt.condition) |condition| {
+            printExpr(writer, condition);
+        }
+        write(writer, " ; ");
+
+        if (for_stmt.post) |post| {
+            printExpr(writer, post);
+        }
+
+        write(writer, " )\n");
+
+        printSpace(writer, depth);
+        const for_depth = if (for_stmt.body.* == .Compound) depth else depth + 1;
+        printStmt(writer, for_stmt.body, for_depth);
+        write(writer, "\n");
     }
 
     fn printStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
-        printSpace(writer, depth);
         switch (stmt.*) {
+            .Break => {
+                write(writer, "break");
+                write(writer, ";\n");
+            },
+            .Continue => {
+                write(writer, "continue");
+                write(writer, ";\n");
+            },
+            .DoWhile => printDoWhileStmt(writer, stmt, depth),
+            .While => printWhileStmt(writer, stmt, depth),
+            .For => printForStmt(writer, stmt, depth),
             .Label => |label_stmt| {
                 writeFmt(writer, "{s}:\n", .{label_stmt.ident});
                 printStmt(writer, label_stmt.stmt, depth + 1);
@@ -978,10 +1235,9 @@ pub const AstPrinter = struct {
             },
             .Compound => |compound_stmt| {
                 write(writer, "{\n");
+                printBlock(writer, compound_stmt.body, depth + 1, true);
                 printSpace(writer, depth);
-                printBlock(writer, compound_stmt.body, depth);
-                printSpace(writer, depth);
-                write(writer, "}\n");
+                write(writer, "}");
             },
             .Return => |return_stmt| {
                 write(writer, "return");

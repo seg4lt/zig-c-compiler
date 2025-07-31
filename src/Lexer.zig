@@ -328,6 +328,12 @@ fn getTokenType(lexeme: []const u8) TokenType {
     if (std.mem.eql(u8, "if", lexeme)) return .If;
     if (std.mem.eql(u8, "else", lexeme)) return .Else;
     if (std.mem.eql(u8, "goto", lexeme)) return .Goto;
+
+    if (std.mem.eql(u8, "do", lexeme)) return .Do;
+    if (std.mem.eql(u8, "while", lexeme)) return .While;
+    if (std.mem.eql(u8, "for", lexeme)) return .For;
+    if (std.mem.eql(u8, "break", lexeme)) return .Break;
+    if (std.mem.eql(u8, "continue", lexeme)) return .Continue;
     return .Ident;
 }
 
@@ -414,6 +420,11 @@ pub const TokenType = enum {
     If,
     Else,
     Goto,
+    Do,
+    While,
+    For,
+    Break,
+    Continue,
 
     // Special
     Eof,
