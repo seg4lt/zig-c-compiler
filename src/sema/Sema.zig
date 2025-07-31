@@ -4,6 +4,9 @@ pub fn sema(opt: SemaOptions) SemaError!void {
 
     try SemaGotoResolution.resolve(opt);
     if (opt.print_ast) print(opt, "Sema Phase: Goto Resolution");
+
+    try SemaLoopLabeling.label(opt);
+    if (opt.print_ast) print(opt, "Sema Phase: Loop Labeling");
 }
 
 fn print(opt: SemaOptions, label: []const u8) void {
@@ -26,3 +29,4 @@ const CompilerError = @import("../util.zig").CompilerError;
 const Allocator = std.mem.Allocator;
 const SemaIdentResolution = @import("SemaIdentResolution.zig");
 const SemaGotoResolution = @import("SemaGotoResolution.zig");
+const SemaLoopLabeling = @import("SemaLoopLabeling.zig");

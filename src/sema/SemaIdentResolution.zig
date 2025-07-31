@@ -122,11 +122,26 @@ fn resolveDecl(s: Self, decl: *Ast.Decl, scope: *ScopeIdents) SemaError!void {
 
 fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
     try switch (stmt.*) {
-        .Break => @panic("not implemented"),
-        .Continue => @panic("not implemented"),
-        .DoWhile => @panic("not implemented"),
-        .While => @panic("not implemented"),
-        .For => @panic("not implemented"),
+        .DoWhile => |do_stmt| {
+            try s.resolveStmt(do_stmt.body, scope);
+            try s.resolveExpr(do_stmt.condition, scope);
+        },
+        .While => |while_stmt| {
+            try s.resolveExpr(while_stmt.condition, scope);
+            try s.resolveStmt(while_stmt.body, scope);
+        },
+        .For => |for_stmt| {
+            var scope_for_init = createNewScope(scope);
+            switch (for_stmt.init.*) {
+                .Decl => |decl| try s.resolveDecl(decl, &scope_for_init),
+                .Expr => |expr| if (expr) |initializer| try s.resolveExpr(initializer, &scope_for_init),
+            }
+            if (for_stmt.condition) |condition| try s.resolveExpr(condition, &scope_for_init);
+            if (for_stmt.post) |post| try s.resolveExpr(post, &scope_for_init);
+
+            var scope_for_body = createNewScope(&scope_for_init);
+            try s.resolveStmt(for_stmt.body, &scope_for_body);
+        },
         .Label => |label_stmt| {
             try s.resolveStmt(label_stmt.stmt, scope);
         },
@@ -143,7 +158,7 @@ fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
         },
         .Return => |return_stmt| s.resolveExpr(return_stmt.expr, scope),
         .Expr => |expr_stmt| s.resolveExpr(expr_stmt.expr, scope),
-        .Goto, .Null => {}, // noop
+        .Break, .Continue, .Goto, .Null => {}, // noop
     };
 }
 

@@ -907,6 +907,12 @@ pub const Ast = struct {
         }
     };
 
+    pub const CaseLabel = struct {
+        label: []const u8,
+        value: []const u8,
+        is_default: bool,
+    };
+
     pub const Expr = union(enum) {
         Constant: struct { value: i64, loc: SourceLocation },
         Var: struct { ident: []const u8, loc: SourceLocation },

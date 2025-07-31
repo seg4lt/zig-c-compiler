@@ -73,11 +73,9 @@ fn scanLabelOnBlockItem(s: Self, block_items: *ArrayList(*Ast.BlockItem), scope_
 
 fn scanLabelOnStmt(s: Self, stmt: *Ast.Stmt, scope_labels: *ScopeLabels) SemaError!void {
     switch (stmt.*) {
-        .Break => @panic("not implemented"),
-        .Continue => @panic("not implemented"),
-        .DoWhile => @panic("not implemented"),
-        .While => @panic("not implemented"),
-        .For => @panic("not implemented"),
+        .DoWhile => |do_while| try s.scanLabelOnStmt(do_while.body, scope_labels),
+        .While => |wh| try s.scanLabelOnStmt(wh.body, scope_labels),
+        .For => |for_stmt| try s.scanLabelOnStmt(for_stmt.body, scope_labels),
         .Label => |*label_stmt| {
             if (scope_labels.contains(label_stmt.ident)) {
                 try s.semaError(
@@ -110,7 +108,7 @@ fn scanLabelOnStmt(s: Self, stmt: *Ast.Stmt, scope_labels: *ScopeLabels) SemaErr
         .Compound => |compound_stmt| {
             try s.scanLabelOnBlock(compound_stmt.body, scope_labels);
         },
-        .Goto, .Null => {}, // noop
+        .Break, .Continue, .Goto, .Null => {}, // noop
     }
 }
 
@@ -155,11 +153,9 @@ fn resolveGotoOnBlock(s: Self, block: *Ast.Block, goto_labels: *ScopeLabels, sco
 
 fn resolveGotoOnStmt(s: Self, stmt: *Ast.Stmt, goto_labels: *ScopeLabels, scope_labels: *ScopeLabels) SemaError!void {
     switch (stmt.*) {
-        .Break => @panic("not implemented"),
-        .Continue => @panic("not implemented"),
-        .DoWhile => @panic("not implemented"),
-        .While => @panic("not implemented"),
-        .For => @panic("not implemented"),
+        .DoWhile => |do_while| try s.resolveGotoOnStmt(do_while.body, goto_labels, scope_labels),
+        .While => |wh| try s.resolveGotoOnStmt(wh.body, goto_labels, scope_labels),
+        .For => |for_stmt| try s.resolveGotoOnStmt(for_stmt.body, goto_labels, scope_labels),
         .Goto => |*goto_stmt| {
             const label = scope_labels.get(goto_stmt.ident) orelse {
                 try s.semaError(
@@ -186,7 +182,7 @@ fn resolveGotoOnStmt(s: Self, stmt: *Ast.Stmt, goto_labels: *ScopeLabels, scope_
             try s.resolveGotoOnBlock(compound_stmt.body, goto_labels, scope_labels);
         },
         .Label => |label_stmt| try s.resolveGotoOnStmt(label_stmt.stmt, goto_labels, scope_labels),
-        .Null => {}, // noop
+        .Break, .Continue, .Null => {}, // noop
     }
 }
 fn resolveGotoOnExpr(s: Self, expr: *Ast.Expr, goto_labels: *ScopeLabels, scope_labels: *ScopeLabels) SemaError!void {
