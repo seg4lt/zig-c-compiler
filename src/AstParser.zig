@@ -150,6 +150,11 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             _ = try p.consume(.Semicolon);
             return .continueStmt(p.arena, null, token.line, token.start);
         },
+        .Default => {
+            _ = try p.consume(.Default);
+            _ = try p.consume(.Colon);
+            return .defaultStmt(p.arena, token.line, token.start);
+        },
         .Do => try p.parseDoWhileStmt(),
         .While => try p.parseWhileStmt(),
         .For => try p.parseForStmt(),
@@ -157,6 +162,13 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             _ = try p.consume(.Semicolon);
             return .nullStmt(p.arena, token.line, token.start);
         },
+        .Case => {
+            _ = try p.consume(.Case);
+            const case_value_token = try p.consume(.IntLiteral);
+            _ = try p.consume(.Colon);
+            return .caseStmt(p.arena, case_value_token.lexeme, case_value_token.line, case_value_token.start);
+        },
+        .Switch => try p.parseSwitchStmt(),
         else => {
             const peeked_token = p.peek();
             const next_token = p.peekOffset(1);
@@ -173,6 +185,48 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
             return .exprStmt(p.arena, expr, peeked_token.line, peeked_token.start);
         },
     };
+}
+
+fn parseSwitchStmt(p: *Self) ParseError!*Ast.Stmt {
+    const switch_token = try p.consume(.Switch);
+    _ = try p.consume(.LParen);
+
+    const condition = try p.parseExpr(0);
+    _ = try p.consume(.RParen);
+
+    var body = ArrayList(*Ast.BlockItem).init(p.arena);
+
+    if (p.peek().type == .LCurly) {
+        _ = try p.consume(.LCurly);
+
+        var case_found = false;
+        while (p.peek().type != .RCurly) {
+            const peeked_token = p.peek();
+            const item = try p.parseBlockItem();
+            if (item.* == .Stmt and (item.Stmt.* == .Case or item.Stmt.* == .Default)) {
+                case_found = true;
+            }
+            if (case_found and item.* == .Decl) {
+                try p.parseErrorOnToken(
+                    ParseError.UnexpectedToken,
+                    peeked_token,
+                    "switch case should not have decl. found",
+                    .{},
+                );
+            }
+            body.append(item) catch unreachable;
+        }
+        _ = try p.consume(.RCurly);
+        return .switchStmt(p.arena, condition, body, switch_token.line, switch_token.start);
+    }
+    const block_item = try p.parseBlockItem();
+    body.append(block_item) catch unreachable;
+
+    if (block_item.* == .Stmt and block_item.Stmt.* == .Case) {
+        const case_stmt = try p.parseBlockItem();
+        body.append(case_stmt) catch unreachable;
+    }
+    return .switchStmt(p.arena, condition, body, switch_token.line, switch_token.start);
 }
 
 fn parseForStmt(p: *Self) ParseError!*Ast.Stmt {
@@ -441,6 +495,7 @@ fn isBinaryOperator(token: *const Token) bool {
         .Question, // hack to get existing system work - maybe ternary is binary :D
         => true,
 
+        .Default,
         .Eof,
         .Ident,
         .Int,
@@ -464,6 +519,8 @@ fn isBinaryOperator(token: *const Token) bool {
         .For,
         .Break,
         .Continue,
+        .Switch,
+        .Case,
         => false,
     };
 }
@@ -482,6 +539,7 @@ fn isCompoundAssignmentOperator(token: *const Token) bool {
         .RightShiftEqual,
         => true,
 
+        .Default,
         .Eof,
         .And,
         .Assign,
@@ -526,6 +584,8 @@ fn isCompoundAssignmentOperator(token: *const Token) bool {
         .For,
         .Break,
         .Continue,
+        .Switch,
+        .Case,
         => false,
     };
 }
@@ -750,7 +810,44 @@ pub const Ast = struct {
         DoWhile: struct { body: *Stmt, condition: *Expr, label: ?[]const u8, loc: SourceLocation },
         While: struct { condition: *Expr, body: *Stmt, label: ?[]const u8, loc: SourceLocation },
         For: struct { init: *ForInit, condition: ?*Expr, post: ?*Expr, body: *Stmt, label: ?[]const u8, loc: SourceLocation },
+        Case: struct { value: []const u8, label: ?[]const u8, loc: SourceLocation },
+        Switch: SwitchStmt,
+        Default: struct { label: ?[]const u8, loc: SourceLocation },
         Null: SourceLocation,
+
+        pub fn defaultStmt(allocator: Allocator, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .Default = .{ .label = null, .loc = .{ .line = line, .start = start } },
+            };
+            return stmt;
+        }
+
+        pub fn caseStmt(allocator: Allocator, value: []const u8, line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .Case = .{
+                    .value = value,
+                    .label = null,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
+
+        pub fn switchStmt(allocator: Allocator, condition: *Expr, body: ArrayList(*BlockItem), line: usize, start: usize) *Stmt {
+            const stmt = allocator.create(Stmt) catch unreachable;
+            stmt.* = .{
+                .Switch = .{
+                    .condition = condition,
+                    .case_labels = null,
+                    .body = body,
+                    .label = null,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return stmt;
+        }
 
         pub fn forStmt(allocator: Allocator, init: *ForInit, condition: ?*Expr, post: ?*Expr, body: *Stmt, label: ?[]const u8, line: usize, start: usize) *Stmt {
             const stmt = allocator.create(Stmt) catch unreachable;
@@ -905,6 +1002,15 @@ pub const Ast = struct {
             init.* = .{ .Expr = expr_initializer };
             return init;
         }
+    };
+
+    pub const SwitchStmt = struct {
+        condition: *Expr,
+        body: ArrayList(*BlockItem),
+        label: ?[]const u8,
+        // labels for all case statements - processed on sema - used on tacky IR
+        case_labels: ?*ArrayList(CaseLabel),
+        loc: SourceLocation,
     };
 
     pub const CaseLabel = struct {
@@ -1218,6 +1324,32 @@ pub const AstPrinter = struct {
 
     fn printStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
         switch (stmt.*) {
+            .Switch => |switch_stmt| {
+                write(writer, "switch (");
+                printExpr(writer, switch_stmt.condition);
+                write(writer, ")\n");
+                printSpace(writer, depth);
+                write(writer, "{\n");
+                for (switch_stmt.body.items) |item| {
+                    if (item.* == .Stmt and item.Stmt.* == .Case) {
+                        printSpace(writer, depth + 1);
+                    } else if (item.* == .Stmt and item.Stmt.* == .Default) {
+                        printSpace(writer, depth + 1);
+                    } else {
+                        printSpace(writer, depth + 2);
+                    }
+                    printBlockItem(writer, item, depth, true);
+                }
+                printSpace(writer, depth);
+                write(writer, "}\n");
+            },
+            .Case => |case_stmt| {
+                write(writer, "case ");
+                writeFmt(writer, "{s}:\n", .{case_stmt.value});
+            },
+            .Default => {
+                write(writer, "default:\n");
+            },
             .Break => {
                 write(writer, "break");
                 write(writer, ";\n");

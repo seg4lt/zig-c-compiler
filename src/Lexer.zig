@@ -334,6 +334,9 @@ fn getTokenType(lexeme: []const u8) TokenType {
     if (std.mem.eql(u8, "for", lexeme)) return .For;
     if (std.mem.eql(u8, "break", lexeme)) return .Break;
     if (std.mem.eql(u8, "continue", lexeme)) return .Continue;
+    if (std.mem.eql(u8, "switch", lexeme)) return .Switch;
+    if (std.mem.eql(u8, "case", lexeme)) return .Case;
+    if (std.mem.eql(u8, "default", lexeme)) return .Default;
     return .Ident;
 }
 
@@ -425,6 +428,9 @@ pub const TokenType = enum {
     For,
     Break,
     Continue,
+    Switch,
+    Case,
+    Default,
 
     // Special
     Eof,

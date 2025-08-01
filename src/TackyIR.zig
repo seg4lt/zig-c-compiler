@@ -70,6 +70,21 @@ fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction))
 
 fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruction)) void {
     switch (stmt.*) {
+        .Switch => |switch_stmt| s.genSwitchStmt(switch_stmt, instructions),
+        .Case => |case_stmt| {
+            if (case_stmt.label == null) {
+                std.debug.panic("** Compiler Bug ** case statement should have label as part of sema loop labeling phase", .{});
+            }
+            const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{case_stmt.label.?}) catch unreachable;
+            instructions.append(.label(owned_ident)) catch unreachable;
+        },
+        .Default => |default_stmt| {
+            if (default_stmt.label == null) {
+                std.debug.panic("** Compiler Bug ** default statement should have label as part of sema loop labeling phase", .{});
+            }
+            const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{default_stmt.label.?}) catch unreachable;
+            instructions.append(.label(owned_ident)) catch unreachable;
+        },
         .Break => |break_stmt| {
             if (break_stmt.ident == null) {
                 std.debug.panic("** Compiler Bug ** break statement should have label as part of sema loop labeling phase", .{});
@@ -211,7 +226,49 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
         .Null => {}, //noop
     }
 }
-pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
+
+fn genSwitchStmt(s: *Self, stmt: Ast.SwitchStmt, instructions: *ArrayList(Tac.Instruction)) void {
+    const condition_expr = s.genExpr(stmt.condition, instructions);
+
+    if (stmt.case_labels == null) {
+        std.debug.panic("** Compiler Bug ** switch statement should have case labels as part of sema loop labeling phase", .{});
+    }
+    // Add jump instruction for all cases first
+    // We still don't emit the instruction for each case
+    // handle non-default first
+    for (stmt.case_labels.?.items) |label| {
+        if (label.is_default) continue;
+        // we create an expression to check if matches case we have
+        const case_value: Tac.Val = .constant(std.fmt.parseInt(u32, label.value, 10) catch unreachable);
+        const condition = s.makeVar();
+        instructions.append(.binary(.EqualEqual, condition_expr, case_value, condition)) catch unreachable;
+
+        // we gen the instruction for the expr we created
+        // if it mathces, we jump the the case label
+        const owned_label = std.fmt.allocPrint(s.arena, "{s}", .{label.label}) catch unreachable;
+        instructions.append(.jumpIfNotZero(condition, owned_label)) catch unreachable;
+    }
+    // handling default case separately as this is if nothing matches
+    for (stmt.case_labels.?.items) |label| {
+        if (!label.is_default) continue;
+        const owned_label = std.fmt.allocPrint(s.arena, "{s}", .{label.label}) catch unreachable;
+        instructions.append(.jump(owned_label)) catch unreachable;
+    }
+
+    // by this point we have added required jump instructions to correct cases
+    // if nothing maches we need to go to end to the switch
+    const switch_end_label = std.fmt.allocPrint(s.arena, "{s}_end", .{stmt.label.?}) catch unreachable;
+    instructions.append(.jump(switch_end_label)) catch unreachable;
+
+    // now add instruction for all cases
+    var body = stmt.body;
+    s.genBlockItem(&body, instructions);
+
+    // this is to mark end of switch to jump if nothing matches
+    instructions.append(.label(switch_end_label)) catch unreachable;
+}
+
+fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
         .Ternary => |ternary_expr| {
             const dst = s.makeVar();

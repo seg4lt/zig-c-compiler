@@ -14,6 +14,8 @@ pub const SemaError = error{
     UndeclaredVariable,
     InvalidLValue,
     InvalidPlacement,
+    DuplicateCase,
+    DuplicateDefaultCase,
 } || CompilerError;
 
 pub fn makeVar(allocator: Allocator, random: std.Random, name: []const u8) []const u8 {
