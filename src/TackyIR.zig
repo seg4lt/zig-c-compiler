@@ -70,11 +70,106 @@ fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction))
 
 fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruction)) void {
     switch (stmt.*) {
-        .Break => @panic("not implemented"),
-        .Continue => @panic("not implemented"),
-        .DoWhile => @panic("not implemented"),
-        .While => @panic("not implemented"),
-        .For => @panic("not implemented"),
+        .Break => |break_stmt| {
+            if (break_stmt.ident == null) {
+                std.debug.panic("** Compiler Bug ** break statement should have label as part of sema loop labeling phase", .{});
+            }
+            // Any other way?
+            // this label needs to match with once defined in the loop
+            const jump_label = std.fmt.allocPrint(s.arena, "{s}_end", .{break_stmt.ident.?}) catch unreachable;
+            instructions.append(.jump(jump_label)) catch unreachable;
+        },
+        .Continue => |continue_stmt| {
+            if (continue_stmt.ident == null) {
+                std.debug.panic("** Compiler Bug ** continue statement should have label as part of sema loop labeling phase", .{});
+            }
+            // Any other way?
+            // this label needs to match with once defined in the loop
+            const jump_label = std.fmt.allocPrint(s.arena, "{s}_post_expr", .{continue_stmt.ident.?}) catch unreachable;
+            instructions.append(.jump(jump_label)) catch unreachable;
+        },
+        .DoWhile => |do_stmt| {
+            if (do_stmt.label == null) {
+                std.debug.panic("** Compiler Bug ** do-while statement should have label as part of sema loop labeling phase", .{});
+            }
+            const loop_start_label = std.fmt.allocPrint(s.arena, "{s}_start", .{do_stmt.label.?}) catch unreachable;
+            const loop_end_label = std.fmt.allocPrint(s.arena, "{s}_end", .{do_stmt.label.?}) catch unreachable;
+
+            // Refactor
+            // adding post expr just because I am handling continue to go to post expr
+            // this makes it easier to model for loop
+            // Maybe there is a better way to do this but..... this is what we have for now
+            const loop_post_expr_label = std.fmt.allocPrint(s.arena, "{s}_post_expr", .{do_stmt.label.?}) catch unreachable;
+
+            instructions.append(.label(loop_start_label)) catch unreachable;
+
+            s.genStmt(do_stmt.body, instructions);
+
+            instructions.append(.label(loop_post_expr_label)) catch unreachable;
+            const condition = s.genExpr(do_stmt.condition, instructions);
+            instructions.append(.jumpIfNotZero(condition, loop_start_label)) catch unreachable;
+
+            instructions.append(.label(loop_end_label)) catch unreachable;
+        },
+        .While => |while_stmt| {
+            if (while_stmt.label == null) {
+                std.debug.panic("** Compiler Bug ** while statement should have label as part of sema loop labeling phase", .{});
+            }
+            const loop_start_label = std.fmt.allocPrint(s.arena, "{s}_start", .{while_stmt.label.?}) catch unreachable;
+            const loop_end_label = std.fmt.allocPrint(s.arena, "{s}_end", .{while_stmt.label.?}) catch unreachable;
+
+            // Note:
+            // adding post expr just because I am handling continue to go to post expr
+            // this makes it easier to model for loop
+            // Maybe there is a better way to do this but..... this is what we have for now
+            const loop_post_expr_label = std.fmt.allocPrint(s.arena, "{s}_post_expr", .{while_stmt.label.?}) catch unreachable;
+
+            instructions.append(.label(loop_start_label)) catch unreachable;
+            instructions.append(.label(loop_post_expr_label)) catch unreachable;
+
+            const condition = s.genExpr(while_stmt.condition, instructions);
+            instructions.append(.jumpIfZero(condition, loop_end_label)) catch unreachable;
+
+            s.genStmt(while_stmt.body, instructions);
+
+            instructions.append(.jump(loop_post_expr_label)) catch unreachable;
+            instructions.append(.label(loop_end_label)) catch unreachable;
+        },
+        .For => |for_stmt| {
+            if (for_stmt.label == null) {
+                std.debug.panic("** Compiler Bug ** for statement should have label as part of sema loop labeling phase", .{});
+            }
+            const loop_start_label = std.fmt.allocPrint(s.arena, "{s}_start", .{for_stmt.label.?}) catch unreachable;
+            const loop_post_expr_label = std.fmt.allocPrint(s.arena, "{s}_post_expr", .{for_stmt.label.?}) catch unreachable;
+            const loop_end_label = std.fmt.allocPrint(s.arena, "{s}_end", .{for_stmt.label.?}) catch unreachable;
+
+            switch (for_stmt.init.*) {
+                .Decl => |decl| s.genDecl(decl, instructions),
+                .Expr => |expr| _ = if (expr) |initializer| s.genExpr(initializer, instructions),
+            }
+
+            // jump to loop start - as first time you come into this phase, you don't want to run post expr
+            instructions.append(.jump(loop_start_label)) catch unreachable;
+
+            instructions.append(.label(loop_post_expr_label)) catch unreachable;
+
+            if (for_stmt.post) |post_expr| {
+                _ = s.genExpr(post_expr, instructions);
+            }
+
+            // Loop start - includes the condition and jump to body if needed
+            instructions.append(.label(loop_start_label)) catch unreachable;
+
+            if (for_stmt.condition) |condition| {
+                const condition_result = s.genExpr(condition, instructions);
+                instructions.append(.jumpIfZero(condition_result, loop_end_label)) catch unreachable;
+            }
+
+            s.genStmt(for_stmt.body, instructions);
+
+            instructions.append(.jump(loop_post_expr_label)) catch unreachable;
+            instructions.append(.label(loop_end_label)) catch unreachable;
+        },
         .Label => |label_stmt| {
             const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{label_stmt.ident}) catch unreachable;
             const label: Tac.Instruction = .label(owned_ident);
@@ -167,7 +262,7 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
         .Assignment => |assignment| {
             const result = s.genExpr(assignment.src, instructions);
             if (assignment.dst.* != .Var) {
-                @panic("** Compiler Bug ** assignment dst has to be a var. Sema phase should have caught this!!!");
+                std.debug.panic("** Compiler Bug ** assignment dst has to be a var. Sema phase should have caught this!!!", .{});
             }
             const dst: Tac.Val = .variable(std.fmt.allocPrint(s.arena, "{s}", .{assignment.dst.Var.ident}) catch unreachable);
             instructions.append(.copy(result, dst)) catch unreachable;
@@ -259,7 +354,7 @@ pub fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Ins
                         .LessThanEqual => Tac.BinaryOperator.LessThanEqual,
                         .GreaterThan => Tac.BinaryOperator.GreaterThan,
                         .GreaterThanEqual => Tac.BinaryOperator.GreaterThanEqual,
-                        .And, .Or => @panic("** Compiler Bug ** - 'and' and 'or' should be handled differently!!!"),
+                        .And, .Or => std.debug.panic("** Compiler Bug ** - 'and' and 'or' should be handled differently!!!", .{}),
                     };
                     instructions.append(.binary(op, left, right, dst)) catch unreachable;
                     return dst;
