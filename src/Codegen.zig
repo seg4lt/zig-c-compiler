@@ -6,12 +6,10 @@ const Options = struct {
     print_codegen: bool = false,
 };
 
-const PUSH_SIZE = 8; // 64-bit architecture uses 8-byte stack alignment
+const PUSH_SIZE = 8; // 64-bit architecture pushes 8-byte
 const STACK_ALIGNMENT = 16;
 const COUNT_REGISTER_ARGS = 6;
-const ARGS_REGISTER: [COUNT_REGISTER_ARGS]Asm.Register.Type = .{
-    .di, .si, .dx, .cx, .r8, .r9,
-};
+const ARGS_REGISTER = [_]Asm.Register.Type{ .di, .si, .dx, .cx, .r8, .r9 };
 
 pub fn emit(opt: Options) Asm.Program {
     const stdErrorWriter = std.io.getStdErr().writer().any();
@@ -62,7 +60,7 @@ const Stage1 = struct {
         const fn_params = fn_entry.params.items;
 
         const register_args = fn_params[0..@min(fn_params.len, COUNT_REGISTER_ARGS)];
-        const stack_args = if (fn_params.len > 6) fn_params[COUNT_REGISTER_ARGS..] else &.{};
+        const stack_args = if (fn_params.len > COUNT_REGISTER_ARGS) fn_params[COUNT_REGISTER_ARGS..] else &.{};
 
         for (register_args, 0..) |reg_param, i| {
             const reg_to_use = ARGS_REGISTER[i];
@@ -111,7 +109,7 @@ const Stage1 = struct {
                     const operator: Asm.UnaryOperator = switch (unary.operator) {
                         .Negate => .Neg,
                         .BitNot => .BitNot,
-                        .Not => @panic("** Compiler Bug ** Unreachable path: expected negate or bit_not unary operator"),
+                        .Not => std.debug.panic("** Compiler Bug ** Unreachable path: expected negate or bit_not unary operator", .{}),
                     };
                     instructions.append(.unary(operator, dst)) catch unreachable;
                 }
@@ -142,7 +140,7 @@ const Stage1 = struct {
                             .LessThan => .LessThan,
                             .LessThanEqual => .LessThanEqual,
                             .NotEqual => .NotEqual,
-                            else => @panic("** Compiler Bug ** Unreachable path: expected comparison operator"),
+                            else => std.debug.panic("** Compiler Bug ** Unreachable path: expected comparison operator", .{}),
                         };
                         instructions.append(.setCC(condition_code, dst)) catch unreachable;
                     },
@@ -160,7 +158,7 @@ const Stage1 = struct {
                             .BitAnd => Asm.BinaryOperator.BitAnd,
                             .BitOr => Asm.BinaryOperator.BitOr,
                             .BitXor => Asm.BinaryOperator.BitXor,
-                            else => @panic("** Compiler Bug ** Unreachable path: expected add, sub or mul binary operator"),
+                            else => std.debug.panic("** Compiler Bug ** Unreachable path: expected add, sub or mul binary operator", .{}),
                         };
                         const right = valToOperand(s.arena, binary.right);
                         instructions.append(.binary(op, right, dst)) catch unreachable;
@@ -178,7 +176,7 @@ const Stage1 = struct {
                         const final_mov_src: Asm.Operand = switch (binary.operator) {
                             .Divide => .register(.ax, .dword),
                             .Mod => .register(.dx, .dword),
-                            else => @panic("** Compiler Bug ** Unreachable path: expected divide or mod binary operator"),
+                            else => std.debug.panic("** Compiler Bug ** Unreachable path: expected divide or mod binary operator", .{}),
                         };
                         const final_mov_dst: Asm.Operand = valToOperand(s.arena, binary.dst);
                         instructions.append(.mov(final_mov_src, final_mov_dst)) catch unreachable;
@@ -215,7 +213,7 @@ const Stage1 = struct {
             .FnCall => |fn_call| {
                 const fn_args = fn_call.args.items;
                 const register_args = fn_args[0..@min(fn_args.len, COUNT_REGISTER_ARGS)];
-                const stack_args = if (fn_args.len > 6) fn_args[COUNT_REGISTER_ARGS..] else &.{};
+                const stack_args = if (fn_args.len > COUNT_REGISTER_ARGS) fn_args[COUNT_REGISTER_ARGS..] else &.{};
 
                 const stack_padding: usize = if (stack_args.len % 2 == 0) 0 else PUSH_SIZE;
                 if (stack_padding != 0) {
@@ -234,6 +232,7 @@ const Stage1 = struct {
                     if (asm_arg == .Register or asm_arg == .Imm) {
                         instructions.append(.push(asm_arg)) catch unreachable;
                     } else {
+                        // push needs either register or immediate value
                         instructions.append(.mov(asm_arg, .register(.ax, .dword))) catch unreachable;
                         instructions.append(.push(.register(.ax, .qword))) catch unreachable;
                     }
@@ -345,10 +344,8 @@ const Stage3 = struct {
     fn fixFn(s: @This(), fn_defn: Asm.FnDefn) Asm.FnDefn {
         var instructions = ArrayList(Asm.Instruction).init(s.arena);
 
-        // Align stack size to 16 bytes - which is required as per System V ABI
-        const ALIGNMENT = 16;
         var aligned_stack_size: usize = fn_defn.stack_size;
-        if (aligned_stack_size % ALIGNMENT != 0) aligned_stack_size += (ALIGNMENT - (aligned_stack_size % ALIGNMENT));
+        if (aligned_stack_size % STACK_ALIGNMENT != 0) aligned_stack_size += (STACK_ALIGNMENT - (aligned_stack_size % STACK_ALIGNMENT));
 
         instructions.append(.allocateStack(aligned_stack_size)) catch unreachable;
         for (fn_defn.instructions.items) |inst| {
