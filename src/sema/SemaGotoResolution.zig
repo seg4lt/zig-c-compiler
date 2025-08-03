@@ -27,7 +27,9 @@ pub fn resolve(opt: SemaOptions) SemaError!void {
 }
 
 fn resolvePg(s: Self, pg: *Ast.Program) SemaError!void {
-    try s.resolveFnDecl(pg.@"fn");
+    for (pg.fns.items) |it| {
+        try s.resolveFnDecl(it);
+    }
 }
 
 fn resolveFnDecl(s: Self, fn_decl: *Ast.FnDecl) SemaError!void {
@@ -35,11 +37,11 @@ fn resolveFnDecl(s: Self, fn_decl: *Ast.FnDecl) SemaError!void {
 
     // find all labels
     // doing this so we can make sure goto is pointing to correct label
-    try s.scanLabelOnBlock(fn_decl.body, &scope_labels);
+    if (fn_decl.body) |body| try s.scanLabelOnBlock(body, &scope_labels);
 
     var goto_labels = ScopeLabels.init(s.arena);
     // resolve all goto labels
-    try s.resolveGotoOnBlock(fn_decl.body, &goto_labels, &scope_labels);
+    if (fn_decl.body) |body| try s.resolveGotoOnBlock(body, &goto_labels, &scope_labels);
 
     // any ghost labels
     var goto_iter = goto_labels.iterator();
@@ -118,6 +120,11 @@ fn scanLabelOnStmt(s: Self, stmt: *Ast.Stmt, scope_labels: *ScopeLabels) SemaErr
 
 fn scanLabelOnExpr(s: Self, expr: *Ast.Expr, scope_labels: *ScopeLabels) SemaError!void {
     switch (expr.*) {
+        .FnCall => |fn_call| {
+            for (fn_call.args.items) |arg| {
+                try s.scanLabelOnExpr(arg, scope_labels);
+            }
+        },
         .Unary => |unary| {
             try s.scanLabelOnExpr(unary.expr, scope_labels);
         },
@@ -199,6 +206,11 @@ fn resolveGotoOnStmt(s: Self, stmt: *Ast.Stmt, goto_labels: *ScopeLabels, scope_
 }
 fn resolveGotoOnExpr(s: Self, expr: *Ast.Expr, goto_labels: *ScopeLabels, scope_labels: *ScopeLabels) SemaError!void {
     switch (expr.*) {
+        .FnCall => |fn_call| {
+            for (fn_call.args.items) |arg| {
+                try s.resolveGotoOnExpr(arg, goto_labels, scope_labels);
+            }
+        },
         .Unary => |unary| {
             try s.resolveGotoOnExpr(unary.expr, goto_labels, scope_labels);
         },

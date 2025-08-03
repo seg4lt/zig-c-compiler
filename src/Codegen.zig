@@ -2,13 +2,21 @@ const Options = struct {
     arena: Allocator,
     scratch_arena: Allocator,
     pg: Tac.Program,
+    symbol_table: *SymbolTable,
     print_codegen: bool = false,
+};
+
+const PUSH_SIZE = 8; // 64-bit architecture uses 8-byte stack alignment
+const STACK_ALIGNMENT = 16;
+const COUNT_REGISTER_ARGS = 6;
+const ARGS_REGISTER: [COUNT_REGISTER_ARGS]Asm.Register.Type = .{
+    .di, .si, .dx, .cx, .r8, .r9,
 };
 
 pub fn emit(opt: Options) Asm.Program {
     const stdErrorWriter = std.io.getStdErr().writer().any();
 
-    var pg = Stage1.init(opt.arena).emitPg(opt.pg);
+    var pg = Stage1.init(opt.arena, opt.symbol_table).emitPg(opt.pg);
     if (opt.print_codegen) Printer.print(stdErrorWriter, pg, "Stage 1");
 
     Stage2.init(opt.arena).processPg(&pg);
@@ -23,20 +31,51 @@ pub fn emit(opt: Options) Asm.Program {
 /// Convert Tacky IR to Asm IR.
 const Stage1 = struct {
     arena: Allocator,
+    symbol_table: *SymbolTable,
 
     const Self = @This();
 
-    fn init(arena: Allocator) Self {
-        return .{ .arena = arena };
+    fn init(arena: Allocator, symbol_table: *SymbolTable) Self {
+        return .{ .arena = arena, .symbol_table = symbol_table };
     }
 
     fn emitPg(s: Self, pg: Tac.Program) Asm.Program {
-        const fn_defn = s.emitFnDefn(pg.fn_defn);
-        return .{ .fn_defn = fn_defn };
+        var fns = ArrayList(Asm.FnDefn).init(s.arena);
+
+        for (pg.fns.items) |fn_defn| {
+            const fn_asm = s.emitFnDefn(fn_defn);
+            fns.append(fn_asm) catch unreachable;
+        }
+        return .{ .fns = fns };
     }
 
     fn emitFnDefn(s: Self, fn_defn: Tac.FnDefn) Asm.FnDefn {
         var instructions = Asm.Instructions.init(s.arena);
+
+        const entry = s.symbol_table.get(fn_defn.name) orelse {
+            std.debug.panic("** Compiler Bug ** - function name not found in symbol table: {s}", .{fn_defn.name});
+        };
+        if (entry != .Fn) {
+            std.debug.panic("** Compiler Bug ** - expected function symbol, found: {s}", .{@tagName(entry)});
+        }
+        const fn_entry = entry.Fn;
+        const fn_params = fn_entry.params.items;
+
+        const register_args = fn_params[0..@min(fn_params.len, COUNT_REGISTER_ARGS)];
+        const stack_args = if (fn_params.len > 6) fn_params[COUNT_REGISTER_ARGS..] else &.{};
+
+        for (register_args, 0..) |reg_param, i| {
+            const reg_to_use = ARGS_REGISTER[i];
+            const asm_arg: Asm.Operand = .pseudo(reg_param.ident);
+            instructions.append(.mov(.register(reg_to_use, .dword), asm_arg)) catch unreachable;
+        }
+
+        for (stack_args, 0..) |stack_param, i| {
+            const asm_arg: Asm.Operand = .pseudo(stack_param.ident);
+            const offset: i64 = STACK_ALIGNMENT + (@as(i64, @intCast(i)) * PUSH_SIZE);
+            const stack_offset: Asm.Operand = .stack(offset);
+            instructions.append(.mov(stack_offset, asm_arg)) catch unreachable;
+        }
 
         for (fn_defn.body.items) |inst| {
             s.emitInst(inst, &instructions);
@@ -173,6 +212,41 @@ const Stage1 = struct {
                 const owned_label = std.fmt.allocPrint(s.arena, "{s}", .{label}) catch unreachable;
                 instructions.append(.label(owned_label)) catch unreachable;
             },
+            .FnCall => |fn_call| {
+                const fn_args = fn_call.args.items;
+                const register_args = fn_args[0..@min(fn_args.len, COUNT_REGISTER_ARGS)];
+                const stack_args = if (fn_args.len > 6) fn_args[COUNT_REGISTER_ARGS..] else &.{};
+
+                const stack_padding: usize = if (stack_args.len % 2 == 0) 0 else PUSH_SIZE;
+                if (stack_padding != 0) {
+                    instructions.append(.allocateStack(stack_padding)) catch unreachable;
+                }
+
+                for (register_args, 0..) |reg_arg, i| {
+                    const reg_to_use = ARGS_REGISTER[i];
+                    const asm_arg = valToOperand(s.arena, reg_arg);
+                    instructions.append(.mov(asm_arg, .register(reg_to_use, .dword))) catch unreachable;
+                }
+
+                var iter = std.mem.reverseIterator(stack_args);
+                while (iter.next()) |stack_arg| {
+                    const asm_arg = valToOperand(s.arena, stack_arg);
+                    if (asm_arg == .Register or asm_arg == .Imm) {
+                        instructions.append(.push(asm_arg)) catch unreachable;
+                    } else {
+                        instructions.append(.mov(asm_arg, .register(.ax, .dword))) catch unreachable;
+                        instructions.append(.push(.register(.ax, .qword))) catch unreachable;
+                    }
+                }
+
+                instructions.append(.call(fn_call.ident)) catch unreachable;
+                const bytes_to_pop = (stack_args.len * PUSH_SIZE) + stack_padding;
+                if (bytes_to_pop > 0) {
+                    instructions.append(.deallocateStack(bytes_to_pop)) catch unreachable;
+                }
+                const dst = valToOperand(s.arena, fn_call.dst);
+                instructions.append(.mov(.register(.ax, .dword), dst)) catch unreachable;
+            },
         }
     }
     fn valToOperand(allocator: Allocator, val: Tac.Val) Asm.Operand {
@@ -199,7 +273,9 @@ const Stage2 = struct {
     }
 
     pub fn processPg(s: @This(), pg: *Asm.Program) void {
-        s.processFn(&pg.fn_defn);
+        for (pg.fns.items) |*fn_defn| {
+            s.processFn(fn_defn);
+        }
     }
 
     fn processFn(s: @This(), fn_defn: *Asm.FnDefn) void {
@@ -231,7 +307,7 @@ const Stage2 = struct {
             .SetCC => |*set_cc| {
                 set_cc.dst = s.mapOperandToStack(set_cc.dst);
             },
-            .Jmp, .JmpCC, .Label, .Cdq, .AllocateStack, .Ret => {}, // noop
+            .Call, .DeallocateStack, .Push, .Jmp, .JmpCC, .Label, .Cdq, .AllocateStack, .Ret => {}, // noop
         }
     }
     fn mapOperandToStack(s: @This(), operand: Asm.Operand) Asm.Operand {
@@ -258,8 +334,12 @@ const Stage3 = struct {
     }
 
     pub fn fixPg(s: @This(), pg: Asm.Program) Asm.Program {
-        const fn_defn = s.fixFn(pg.fn_defn);
-        return .{ .fn_defn = fn_defn };
+        var fns = ArrayList(Asm.FnDefn).init(s.arena);
+        for (pg.fns.items) |it| {
+            const fn_defn = s.fixFn(it);
+            fns.append(fn_defn) catch unreachable;
+        }
+        return .{ .fns = fns };
     }
 
     fn fixFn(s: @This(), fn_defn: Asm.FnDefn) Asm.FnDefn {
@@ -332,16 +412,23 @@ const Stage3 = struct {
                 .Unary,
                 .AllocateStack,
                 .Ret,
+                .Call,
+                .Push,
+                .DeallocateStack,
                 => instructions.append(inst) catch unreachable,
             }
         }
-        return .{ .name = fn_defn.name, .instructions = instructions, .stack_size = aligned_stack_size };
+        return .{
+            .name = fn_defn.name,
+            .instructions = instructions,
+            .stack_size = aligned_stack_size,
+        };
     }
 };
 
 pub const Asm = struct {
     pub const Program = struct {
-        fn_defn: FnDefn,
+        fns: ArrayList(FnDefn),
     };
     pub const FnDefn = struct {
         name: []const u8,
@@ -361,7 +448,22 @@ pub const Asm = struct {
         IDiv: Operand,
         Cdq,
         AllocateStack: usize,
+        Call: []const u8,
+        DeallocateStack: usize,
+        Push: Operand,
         Ret,
+
+        pub fn call(fn_name: []const u8) Instruction {
+            return .{ .Call = fn_name };
+        }
+
+        pub fn deallocateStack(size: usize) Instruction {
+            return .{ .DeallocateStack = size };
+        }
+
+        pub fn push(operand: Operand) Instruction {
+            return .{ .Push = operand };
+        }
 
         pub fn cmp(op1: Operand, op2: Operand) Instruction {
             return .{ .Cmp = .{ .op1 = op1, .op2 = op2 } };
@@ -473,6 +575,10 @@ pub const Asm = struct {
             cx,
             sp,
             dx,
+            di,
+            si,
+            r8,
+            r9,
             r10,
             r11,
         };
@@ -499,11 +605,23 @@ pub const Asm = struct {
                     .dword => "%ecx",
                     .qword => "%rcx",
                 },
+                .di => switch (self.size) {
+                    .byte => "%dil",
+                    .word => "%di",
+                    .dword => "%edi",
+                    .qword => "%rdi",
+                },
                 .dx => switch (self.size) {
                     .byte => "%dl",
                     .word => "%dx",
                     .dword => "%edx",
                     .qword => "%rdx",
+                },
+                .si => switch (self.size) {
+                    .byte => "%sil",
+                    .word => "%si",
+                    .dword => "%esi",
+                    .qword => "%rsi",
                 },
                 .sp => switch (self.size) {
                     .byte => "%spl",
@@ -516,6 +634,18 @@ pub const Asm = struct {
                     .word => "%bp",
                     .dword => "%ebp",
                     .qword => "%rbp",
+                },
+                .r9 => switch (self.size) {
+                    .byte => "%r9b",
+                    .word => "%r9w",
+                    .dword => "%r9d",
+                    .qword => "%r9",
+                },
+                .r8 => switch (self.size) {
+                    .byte => "%r8b",
+                    .word => "%r8w",
+                    .dword => "%r8d",
+                    .qword => "%r8",
                 },
                 .r10 => switch (self.size) {
                     .byte => "%r10b",
@@ -541,8 +671,10 @@ const Printer = struct {
     pub fn print(writer: AnyWriter, pg: Asm.Program, title: []const u8) void {
         const s = Printer{ .writer = writer };
         s.writeFmt("-- Codegen: {s} --\n", .{title});
-        s.printFnDecl(pg.fn_defn, 0);
-        s.write("\n");
+        for (pg.fns.items) |fn_defn| {
+            s.printFnDecl(fn_defn, 0);
+            s.write("\n");
+        }
     }
     fn printFnDecl(s: @This(), fn_defn: Asm.FnDefn, depth: usize) void {
         s.printSpace(depth);
@@ -554,6 +686,17 @@ const Printer = struct {
     fn printInst(s: @This(), inst: Asm.Instruction, depth: usize) void {
         s.printSpace(depth);
         switch (inst) {
+            .Call => |call_inst| {
+                s.write("Call ");
+                s.writeFmt("{s}", .{call_inst});
+            },
+            .DeallocateStack => |size| {
+                s.writeFmt("DeallocateStack {d}", .{size});
+            },
+            .Push => |operand| {
+                s.write("Push ");
+                s.printOperand(operand);
+            },
             .Mov => |mov_inst| {
                 s.write("Mov ");
                 s.printOperand(mov_inst.src);
@@ -658,3 +801,4 @@ const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
 const ArrayList = std.ArrayList;
 const HashMap = std.StringHashMap;
+const SymbolTable = @import("SymbolTable.zig");

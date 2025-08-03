@@ -50,12 +50,14 @@ pub fn label(opt: SemaOptions) SemaError!void {
 }
 
 fn labelPg(s: Self, pg: *Ast.Program) SemaError!void {
-    try s.labelFnDecl(pg.@"fn");
+    for (pg.fns.items) |it| {
+        try s.labelFnDecl(it);
+    }
 }
 
 fn labelFnDecl(s: Self, fn_decl: *Ast.FnDecl) SemaError!void {
     var labels = Labels.init(s.arena);
-    try s.labelBlock(fn_decl.body, &labels);
+    if (fn_decl.body) |body| try s.labelBlock(body, &labels);
 }
 
 fn labelBlock(s: Self, block: *Ast.Block, labels: *Labels) SemaError!void {
@@ -215,6 +217,11 @@ fn labelStmt(s: Self, stmt: *Ast.Stmt, labels: *Labels) SemaError!void {
 }
 fn labelExpr(s: Self, expr: *Ast.Expr, labels: *Labels) SemaError!void {
     switch (expr.*) {
+        .FnCall => |fn_call| {
+            for (fn_call.args.items) |arg| {
+                try s.labelExpr(arg, labels);
+            }
+        },
         .Ternary => |ternary_expr| {
             try s.labelExpr(ternary_expr.condition, labels);
             try s.labelExpr(ternary_expr.then, labels);

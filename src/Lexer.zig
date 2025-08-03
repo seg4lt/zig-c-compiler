@@ -97,6 +97,7 @@ fn scan(s: *Self) void {
             '~' => s.addToken(.BitNot),
             '?' => s.addToken(.Question),
             ':' => s.addToken(.Colon),
+            ',' => s.addToken(.Comma),
             '!' => {
                 if (s.peek() == '=') {
                     _ = s.consumeAny();
@@ -372,6 +373,7 @@ pub const TokenType = enum {
     Semicolon,
     Question,
     Colon,
+    Comma,
 
     // operators
     BitNot,

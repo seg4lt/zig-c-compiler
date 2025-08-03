@@ -7,6 +7,9 @@ pub fn sema(opt: SemaOptions) SemaError!void {
 
     try SemaLoopLabeling.label(opt);
     if (opt.print_ast) print(opt, "Sema Phase: Loop Labeling");
+
+    try SemaTypeChecking.check(opt);
+    if (opt.print_ast) print(opt, "Sema Phase: Type Checking");
 }
 
 fn print(opt: SemaOptions, label: []const u8) void {
@@ -30,3 +33,4 @@ const Allocator = std.mem.Allocator;
 const SemaIdentResolution = @import("SemaIdentResolution.zig");
 const SemaGotoResolution = @import("SemaGotoResolution.zig");
 const SemaLoopLabeling = @import("SemaLoopLabeling.zig");
+const SemaTypeChecking = @import("SemaTypeChecking.zig");

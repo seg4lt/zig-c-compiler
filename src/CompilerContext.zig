@@ -1,3 +1,4 @@
+// Note: Probably need to decompose this entity - lots of things are stored here, but maybe this is fine
 gpa: Allocator,
 scratch_arena_state: *std.heap.ArenaAllocator,
 lexer_arena_state: ?*std.heap.ArenaAllocator,
@@ -7,6 +8,9 @@ tacky_arena_state: ?*std.heap.ArenaAllocator,
 codegen_arena_state: ?*std.heap.ArenaAllocator,
 code_emission_arena_state: ?*std.heap.ArenaAllocator,
 
+symbol_arena: *std.heap.ArenaAllocator,
+symbol_table: SymbolTable,
+
 error_reporter: *ErrorReporter,
 error_reporter_arena_state: *std.heap.ArenaAllocator,
 
@@ -15,6 +19,10 @@ random: std.Random,
 const Self = @This();
 
 pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
+    const symbol_arena = gpa.create(std.heap.ArenaAllocator) catch unreachable;
+    symbol_arena.* = std.heap.ArenaAllocator.init(gpa);
+    const symbol_table = SymbolTable.init(symbol_arena.allocator());
+
     const arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
     arena_state.* = std.heap.ArenaAllocator.init(gpa);
 
@@ -48,7 +56,7 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
 
     return .{
         .gpa = gpa,
-        .random = rand,
+
         .scratch_arena_state = arena_state,
         .lexer_arena_state = lexer_arena_state,
         .parser_arena_state = parser_arena_state,
@@ -56,8 +64,14 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
         .tacky_arena_state = tacky_arena_state,
         .codegen_arena_state = codegen_arena_state,
         .code_emission_arena_state = code_emission_arena_state,
+
+        .symbol_arena = symbol_arena,
+        .symbol_table = symbol_table,
+
         .error_reporter = error_reporter,
         .error_reporter_arena_state = error_reporter_arena_state,
+
+        .random = rand,
     };
 }
 
@@ -65,6 +79,7 @@ pub fn deinit(self: *Self) void {
     _ = self.scratch_arena_state.deinit();
     self.gpa.destroy(self.scratch_arena_state);
 
+    self.deinitSymbolArena();
     self.deinitLexerArena();
     self.deinitParserArena();
     self.deinitSemaArena();
@@ -86,6 +101,11 @@ pub fn resetScratchArena(self: *const Self) void {
 
 pub fn lexerArena(self: *const Self) Allocator {
     return self.lexer_arena_state.?.allocator();
+}
+
+pub fn deinitSymbolArena(self: *Self) void {
+    _ = self.symbol_arena.deinit();
+    self.gpa.destroy(self.symbol_arena);
 }
 
 pub fn deinitLexerArena(self: *Self) void {
@@ -159,3 +179,4 @@ pub fn deinitCodeEmissionArena(self: *Self) void {
 const std = @import("std");
 const ErrorReporter = @import("ErrorReporter.zig");
 const Allocator = std.mem.Allocator;
+const SymbolTable = @import("SymbolTable.zig");

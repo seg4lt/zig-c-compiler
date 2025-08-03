@@ -14,7 +14,7 @@ pub fn preprocessor(allocator: Allocator, src_path: []const u8) ![]u8 {
     return try std.fs.cwd().readFileAlloc(allocator, preprocessed_path, 4096);
 }
 
-const OutputType = enum {
+pub const OutputType = enum {
     exe,
     obj,
 };

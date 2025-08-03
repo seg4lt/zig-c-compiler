@@ -38,6 +38,7 @@ fn runCompiler(gpa: Allocator) !void {
             .program = program_ast orelse return error.OwwwMyyyGauudddAstIsNull,
             .arena = compiler_ctx.semaArena(),
             .scratch_arena = compiler_ctx.scratchArena(),
+            .symbol_table = &compiler_ctx.symbol_table,
             .error_reporter = compiler_ctx.error_reporter,
             .random = compiler_ctx.random,
             .print_ast = true,
@@ -60,6 +61,7 @@ fn runCompiler(gpa: Allocator) !void {
         .arena = compiler_ctx.codegenArena(),
         .scratch_arena = compiler_ctx.scratchArena(),
         .pg = tacky_pg orelse return error.BooooYourEyeRrrrIsNull,
+        .symbol_table = &compiler_ctx.symbol_table,
         .print_codegen = true,
     }) else null;
     compiler_ctx.resetScratchArena();
@@ -71,6 +73,7 @@ fn runCompiler(gpa: Allocator) !void {
             .scratch_arena = compiler_ctx.scratchArena(),
             .src_path_no_ext = args.src_path[0 .. args.src_path.len - 2],
             .pg = codegen_pg orelse return error.WaattDHekkCogegenProgramIsNull,
+            .symbol_table = &compiler_ctx.symbol_table,
             .print = true,
         });
     }
@@ -82,7 +85,7 @@ fn runCompiler(gpa: Allocator) !void {
         assembleAndLink(
             compiler_ctx.scratchArena(),
             args.src_path[0 .. args.src_path.len - 2],
-            .exe,
+            args.output_type,
         );
     }
 }

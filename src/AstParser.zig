@@ -56,19 +56,37 @@ fn print(arena: Allocator, program: *const Ast.Program) void {
 }
 
 fn parseProgram(p: *Self) ParseError!*Ast.Program {
-    const fn_decl: *Ast.FnDecl = try p.parseFnDecl();
-    return .init(p.arena, fn_decl);
+    var fns = ArrayList(*Ast.FnDecl).init(p.arena);
+    while (!p.isAtEnd()) {
+        const fn_decl: *Ast.FnDecl = try p.parseFnDecl(.{});
+        fns.append(fn_decl) catch unreachable;
+    }
+    return .init(p.arena, fns);
 }
 
-fn parseFnDecl(p: *Self) ParseError!*Ast.FnDecl {
+const ParseFnDecl = struct {
+    only_decl: bool = false,
+};
+
+fn parseFnDecl(p: *Self, opt: ParseFnDecl) ParseError!*Ast.FnDecl {
     _ = try p.consume(.Int);
     const ident = try p.consume(.Ident);
 
-    try p.parseFnParams();
+    const params = try p.parseFnParams();
 
+    if (p.peek().type == .Semicolon) {
+        _ = try p.consume(.Semicolon);
+        return .init(p.arena, ident.lexeme, params, null, ident.line, ident.start);
+    }
+    if (opt.only_decl) {
+        try p.parseError(
+            ParseError.ExpectedOnlyFnDefinition,
+            "Expected only function declaration, found function definition",
+            .{},
+        );
+    }
     const body = try p.parseBlock();
-
-    return .init(p.arena, ident.lexeme, body, ident.line, ident.start);
+    return .init(p.arena, ident.lexeme, params, body, ident.line, ident.start);
 }
 
 fn parseBlock(p: *Self) ParseError!*Ast.Block {
@@ -101,6 +119,12 @@ fn parseDecl(p: *Self) ParseError!*Ast.Decl {
     if (token.type != .Int) {
         try p.parseError(ParseError.UnexpectedToken, "expected int found `{s}` << {s} >> ", .{ token.lexeme, @tagName(token.type) });
     }
+
+    if (p.isFnDecl()) {
+        const fn_decl = try p.parseFnDecl(.{ .only_decl = true });
+        return .fnDecl(p.arena, fn_decl);
+    }
+
     _ = try p.consume(.Int);
     const ident_token = try p.consume(.Ident);
     const ident = ident_token.lexeme;
@@ -118,10 +142,42 @@ fn parseDecl(p: *Self) ParseError!*Ast.Decl {
     return .variableDecl(p.arena, ident, var_initializer, ident_token.line, ident_token.start);
 }
 
-fn parseFnParams(p: *Self) ParseError!void {
+fn isFnDecl(p: Self) bool {
+    return p.peek().type == .Int and p.peekOffset(1).type == .Ident and p.peekOffset(2).type == .LParen;
+}
+
+fn parseFnParams(p: *Self) ParseError!ArrayList(*Ast.FnParam) {
     _ = try p.consume(.LParen);
-    if (p.peek().type == .Void) _ = try p.consume(.Void);
+    var params = ArrayList(*Ast.FnParam).init(p.arena);
+
+    if (p.peek().type == .Void) {
+        _ = try p.consume(.Void);
+        _ = try p.consume(.RParen);
+        return params;
+    }
+
+    while (p.peek().type != .RParen) {
+        // we only support int type for now
+        _ = try p.consume(.Int);
+        const ident = try p.consume(.Ident);
+
+        const param: *Ast.FnParam = .fnParam(p.arena, ident.lexeme, ident.line, ident.start);
+        params.append(param) catch unreachable;
+
+        // maybe we need to break if we can't find comma?
+        if (p.peek().type == .Comma) {
+            _ = try p.consume(.Comma);
+            if (p.peek().type == .RParen) {
+                try p.parseError(
+                    ParseError.UnexpectedToken,
+                    "trailing comma in parameter list is not allowed",
+                    .{},
+                );
+            }
+        }
+    }
     _ = try p.consume(.RParen);
+    return params;
 }
 
 fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
@@ -378,8 +434,16 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
         },
         .Ident => {
             const ident_token = try p.consumeAny();
-            const var_expr: *Ast.Expr = .varExpr(p.arena, ident_token.lexeme, ident_token.line, ident_token.start);
-            return p.parsePostfixExpr(var_expr);
+            const expr = blk: {
+                if (p.peek().type != .LParen) {
+                    const var_expr: *Ast.Expr = .varExpr(p.arena, ident_token.lexeme, ident_token.line, ident_token.start);
+                    break :blk var_expr;
+                }
+                const args = try p.parseFnArgs();
+                break :blk Ast.Expr.fnCallExpr(p.arena, ident_token.lexeme, args, ident_token.line, ident_token.start);
+            };
+
+            return p.parsePostfixExpr(expr);
         },
         else => try p.parseError(
             ParseError.UnexpectedToken,
@@ -387,6 +451,23 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             .{ token.lexeme, @tagName(token.type) },
         ),
     }
+}
+
+fn parseFnArgs(p: *Self) ParseError!ArrayList(*Ast.Expr) {
+    var args = ArrayList(*Ast.Expr).init(p.arena);
+    _ = try p.consume(.LParen);
+    while (p.peek().type != .RParen) {
+        const expr = try p.parseExpr(0);
+        args.append(expr) catch unreachable;
+        if (p.peek().type == .Comma) {
+            _ = try p.consume(.Comma);
+            if (p.peek().type == .RParen) {
+                try p.parseError(ParseError.TrainingComma, "trailing comma in function call is not allowed", .{});
+            }
+        }
+    }
+    _ = try p.consume(.RParen);
+    return args;
 }
 
 fn parsePostfixExpr(p: *Self, expr: *Ast.Expr) ParseError!*Ast.Expr {
@@ -521,6 +602,7 @@ fn isBinaryOperator(token: *const Token) bool {
         .Continue,
         .Switch,
         .Case,
+        .Comma,
         => false,
     };
 }
@@ -539,6 +621,7 @@ fn isCompoundAssignmentOperator(token: *const Token) bool {
         .RightShiftEqual,
         => true,
 
+        .Comma,
         .Default,
         .Eof,
         .And,
@@ -723,11 +806,11 @@ fn isAtEndOffset(p: Self, offset: usize) bool {
 
 pub const Ast = struct {
     pub const Program = struct {
-        @"fn": *FnDecl,
+        fns: ArrayList(*FnDecl),
 
-        pub fn init(allocator: Allocator, @"fn": *FnDecl) *Program {
+        pub fn init(allocator: Allocator, fns: ArrayList(*FnDecl)) *Program {
             const pg = allocator.create(Program) catch unreachable;
-            pg.* = .{ .@"fn" = @"fn" };
+            pg.* = .{ .fns = fns };
             return pg;
         }
     };
@@ -766,6 +849,12 @@ pub const Ast = struct {
         Fn: *FnDecl,
         Var: *VarDecl,
 
+        pub fn fnDecl(allocator: Allocator, fn_decl: *FnDecl) *Decl {
+            const item = allocator.create(Decl) catch unreachable;
+            item.* = .{ .Fn = fn_decl };
+            return item;
+        }
+
         pub fn variableDecl(allocator: Allocator, ident: []const u8, init: ?*Expr, line: usize, start: usize) *Decl {
             const item = allocator.create(Decl) catch unreachable;
             const _var_decl = allocator.create(VarDecl) catch unreachable;
@@ -783,19 +872,36 @@ pub const Ast = struct {
 
     pub const FnDecl = struct {
         name: []const u8,
-        body: *Block,
+        params: ArrayList(*FnParam),
+        body: ?*Block,
         loc: SourceLocation,
 
-        pub fn init(allocator: Allocator, name: []const u8, body: *Block, line: usize, start: usize) *FnDecl {
+        pub fn init(allocator: Allocator, name: []const u8, params: ArrayList(*FnParam), body: ?*Block, line: usize, start: usize) *FnDecl {
             const fn_decl = allocator.create(FnDecl) catch unreachable;
             fn_decl.* = .{
                 .name = name,
+                .params = params,
                 .body = body,
                 .loc = .{ .line = line, .start = start },
             };
             return fn_decl;
         }
     };
+
+    pub const FnParam = struct {
+        ident: []const u8,
+        loc: SourceLocation,
+
+        pub fn fnParam(allocator: Allocator, ident: []const u8, line: usize, start: usize) *FnParam {
+            const param = allocator.create(FnParam) catch unreachable;
+            param.* = .{
+                .ident = ident,
+                .loc = .{ .line = line, .start = start },
+            };
+            return param;
+        }
+    };
+
     // @note - all type need SourceLocation, instead of tagged union should I have use normal union type?
     // That way I can easily get source location in places where I need to display error with correct line on guard clause
     pub const Stmt = union(enum) {
@@ -1028,6 +1134,19 @@ pub const Ast = struct {
         Group: struct { expr: *Expr, loc: SourceLocation },
         Postfix: struct { operator: PostfixOperator, expr: *Expr, loc: SourceLocation },
         Ternary: struct { condition: *Expr, then: *Expr, @"else": *Expr, loc: SourceLocation },
+        FnCall: struct { ident: []const u8, args: ArrayList(*Expr), loc: SourceLocation },
+
+        pub fn fnCallExpr(allocator: Allocator, ident: []const u8, args: ArrayList(*Expr), line: usize, start: usize) *Expr {
+            const expr = allocator.create(Expr) catch unreachable;
+            expr.* = .{
+                .FnCall = .{
+                    .ident = ident,
+                    .args = args,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return expr;
+        }
 
         pub fn ternaryExpr(allocator: Allocator, condition: *Expr, then: *Expr, @"else": *Expr, line: usize, start: usize) *Expr {
             const expr = allocator.create(Expr) catch unreachable;
@@ -1158,6 +1277,8 @@ pub const Ast = struct {
 };
 
 const ParseError = error{
+    TrainingComma,
+    ExpectedOnlyFnDefinition,
     InvalidLValue,
     UnexpectedToken,
     StatementExpected,
@@ -1172,20 +1293,35 @@ pub const AstPrinter = struct {
     pub fn print(writer: AnyWriter, pg: *const Ast.Program) void {
         write(writer, "-- AST --\n");
         write(writer, "program\n");
-        printFnDecl(writer, pg.@"fn", 1);
+        for (pg.fns.items) |fn_decl| {
+            printFnDecl(writer, fn_decl, 1);
+            write(writer, "\n");
+        }
         write(writer, "\n");
     }
 
     fn printFnDecl(writer: AnyWriter, fn_decl: *const Ast.FnDecl, depth: usize) void {
-        printSpace(writer, depth);
-        writeFmt(writer, "int {s}(void)\n", .{fn_decl.name});
-        printSpace(writer, depth);
-        write(writer, "{\n");
+        if (fn_decl.body != null) printSpace(writer, depth);
+        writeFmt(writer, "int {s}( ", .{fn_decl.name});
+        for (fn_decl.params.items, 0..) |param, i| {
+            if (fn_decl.body != null) write(writer, "int ");
+            writeFmt(writer, "{s}", .{param.ident});
+            if (i < fn_decl.params.items.len - 1) {
+                write(writer, ", ");
+            }
+        }
+        write(writer, " )");
 
-        printBlock(writer, fn_decl.body, depth + 1, true);
-
-        printSpace(writer, depth);
-        write(writer, "}");
+        if (fn_decl.body) |body| {
+            write(writer, "\n");
+            printSpace(writer, depth);
+            write(writer, "{\n");
+            printBlock(writer, body, depth + 1, true);
+            printSpace(writer, depth);
+            write(writer, "}");
+        } else {
+            write(writer, ";\n");
+        }
     }
 
     fn printBlock(writer: AnyWriter, block: *const Ast.Block, depth: usize, new_line: bool) void {
@@ -1392,6 +1528,16 @@ pub const AstPrinter = struct {
     }
     fn printExpr(writer: AnyWriter, expr: *const Ast.Expr) void {
         switch (expr.*) {
+            .FnCall => |fn_call_expr| {
+                writeFmt(writer, "{s}(", .{fn_call_expr.ident});
+                for (fn_call_expr.args.items, 0..) |arg, i| {
+                    printExpr(writer, arg);
+                    if (i < fn_call_expr.args.items.len - 1) {
+                        write(writer, ", ");
+                    }
+                }
+                write(writer, ")");
+            },
             .Ternary => |ternary_expr| {
                 printExpr(writer, ternary_expr.condition);
                 write(writer, " ? ");

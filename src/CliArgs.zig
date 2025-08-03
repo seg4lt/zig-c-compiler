@@ -1,5 +1,6 @@
 src_path: []const u8,
 flag: CliFlag,
+output_type: OutputType,
 
 const Self = @This();
 
@@ -36,6 +37,7 @@ pub fn parse() !Self {
 
     var flag: CliFlag = .ALL;
     var may_src_path: ?[]const u8 = null;
+    var output_type: OutputType = .exe;
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, "--lex", arg)) {
@@ -58,6 +60,9 @@ pub fn parse() !Self {
             flag = .CODE_GEN;
             continue;
         }
+        if (std.mem.eql(u8, "-c", arg)) {
+            output_type = .obj;
+        }
         may_src_path = arg;
     }
 
@@ -72,7 +77,10 @@ pub fn parse() !Self {
     return .{
         .src_path = src_path,
         .flag = flag,
+        .output_type = output_type,
     };
 }
 
 const std = @import("std");
+const compiler_driver = @import("compiler_driver.zig");
+const OutputType = compiler_driver.OutputType;

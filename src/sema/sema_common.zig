@@ -4,18 +4,25 @@ pub const SemaOptions = struct {
     scratch_arena: Allocator,
     error_reporter: *ErrorReporter,
     random: std.Random,
+    symbol_table: *SymbolTable,
     print_ast: bool = false,
 };
 
 pub const SemaError = error{
-    UndeclaredLabel,
-    DuplicateLabel,
-    DuplicateIdentifier,
-    UndeclaredVariable,
-    InvalidLValue,
-    InvalidPlacement,
     DuplicateCase,
     DuplicateDefaultCase,
+    DuplicateFnDeclaration,
+    DuplicateIdentifier,
+    DuplicateLabel,
+    InvalidDeclaration,
+    InvalidFnParamCount,
+    InvalidLValue,
+    InvalidPlacement,
+    InvalidType,
+    UndeclaredFunction,
+    UndeclaredLabel,
+    UndeclaredVariable,
+    WrongNumberOfArgument,
 } || CompilerError;
 
 pub fn makeVar(allocator: Allocator, random: std.Random, name: []const u8) []const u8 {
@@ -37,3 +44,4 @@ const Allocator = std.mem.Allocator;
 const CompilerError = @import("../util.zig").CompilerError;
 const Ast = @import("../AstParser.zig").Ast;
 const ErrorReporter = @import("../ErrorReporter.zig");
+const SymbolTable = @import("../SymbolTable.zig");

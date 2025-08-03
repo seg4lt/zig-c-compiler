@@ -1,10 +1,17 @@
 int main(void) {
-    int a = 0;
-    switch(a) {
-        case 0: return 0;
-        default: return 1;
-        case 2: return 2;
-        // can't have two default statements in same enclosing switch
-        default: return 2;
-    }
+    int a = 10;
+    // a function declaration is a separate scope,
+    // so parameter 'a' doesn't conflict with variable 'a' above
+    int f(int a);
+
+    // int foo(void) {
+    //     return 1;
+    // }
+    // int x = foo();
+
+    return f(a);
+}
+
+int f(int a) {
+    return a * 2;
 }

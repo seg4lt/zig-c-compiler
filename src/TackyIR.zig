@@ -18,17 +18,24 @@ pub fn genTacky(opt: Options) Tac.Program {
 }
 
 fn genPg(s: *Self, pg: *const Ast.Program) Tac.Program {
-    const fn_defn = s.genFnDefn(pg.@"fn");
-    const pg_tac = Tac.Program{ .fn_defn = fn_defn };
-    return pg_tac;
+    var fns = ArrayList(Tac.FnDefn).init(s.arena);
+
+    for (pg.fns.items) |fn_decl| {
+        if (fn_decl.body != null) {
+            const fn_tacky = s.genFnDefn(fn_decl);
+            fns.append(fn_tacky) catch unreachable;
+        }
+    }
+    return .{ .fns = fns };
 }
 
 fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.FnDefn {
     var instructions = ArrayList(Tac.Instruction).init(s.arena);
 
-    s.genBlock(fn_decl.body, &instructions);
-    instructions.append(.ret(.constant(0))) catch unreachable;
-
+    if (fn_decl.body) |body| {
+        s.genBlock(body, &instructions);
+        instructions.append(.ret(.constant(0))) catch unreachable;
+    }
     return .{
         .name = std.fmt.allocPrint(s.arena, "{s}", .{fn_decl.name}) catch unreachable,
         .body = instructions,
@@ -59,11 +66,9 @@ fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction))
             // variable with just declaration can be ignored, it has served its purpose
         },
         .Fn => |fn_decl| {
-            _ = fn_decl;
-            @panic("TODO: not implemented");
-            // if (fn_decl.body != null) {
-            //     @panic("** Compiler Bug ** fn declaration should not have body");
-            // }
+            if (fn_decl.body != null) {
+                std.debug.panic("** Compiler Bug ** - function declaration should not have body in this phase", .{});
+            }
         },
     }
 }
@@ -270,6 +275,17 @@ fn genSwitchStmt(s: *Self, stmt: Ast.SwitchStmt, instructions: *ArrayList(Tac.In
 
 fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
+        .FnCall => |fn_call| {
+            var args = ArrayList(Tac.Val).init(s.arena);
+
+            for (fn_call.args.items) |arg| {
+                const arg_val = s.genExpr(arg, instructions);
+                args.append(arg_val) catch unreachable;
+            }
+            const dst = s.makeVar();
+            instructions.append(.fnCall(fn_call.ident, args, dst)) catch unreachable;
+            return dst;
+        },
         .Ternary => |ternary_expr| {
             const dst = s.makeVar();
 
@@ -436,7 +452,7 @@ pub fn makeLabel(s: *Self, label: []const u8) Tac.Instruction {
 
 pub const Tac = struct {
     pub const Program = struct {
-        fn_defn: FnDefn,
+        fns: ArrayList(FnDefn),
     };
     pub const FnDefn = struct {
         name: []const u8,
@@ -451,6 +467,17 @@ pub const Tac = struct {
         JumpIfZero: struct { condition: Val, label: []const u8 },
         JumpIfNotZero: struct { condition: Val, label: []const u8 },
         Label: []const u8,
+        FnCall: struct { ident: []const u8, args: ArrayList(Val), dst: Val },
+
+        pub fn fnCall(ident: []const u8, args: ArrayList(Val), dst: Val) Instruction {
+            return .{
+                .FnCall = .{
+                    .ident = ident,
+                    .args = args,
+                    .dst = dst,
+                },
+            };
+        }
 
         pub fn label(name: []const u8) Instruction {
             return .{ .Label = name };
@@ -544,7 +571,9 @@ const TackyIRPrinter = struct {
 
     fn printPg(s: @This(), pg: Tac.Program) void {
         s.write("-- Tacky IR --\n");
-        s.printFnDecl(pg.fn_defn);
+        for (pg.fns.items) |fn_defn| {
+            s.printFnDecl(fn_defn);
+        }
     }
     fn printFnDecl(s: @This(), fn_defn: Tac.FnDefn) void {
         s.write(fn_defn.name);
@@ -556,6 +585,18 @@ const TackyIRPrinter = struct {
     fn printInst(s: @This(), inst: Tac.Instruction) void {
         s.write("  ");
         switch (inst) {
+            .FnCall => |fn_call| {
+                s.write("FnCall(");
+                s.write(fn_call.ident);
+                s.write(", args: [");
+                for (fn_call.args.items, 0..) |arg, i| {
+                    s.printVal(arg);
+                    if (i < fn_call.args.items.len - 1) s.write(", ");
+                }
+                s.write("], dst: ");
+                s.printVal(fn_call.dst);
+                s.write(")");
+            },
             .Return => |ret| {
                 s.write("Return(");
                 s.printVal(ret);

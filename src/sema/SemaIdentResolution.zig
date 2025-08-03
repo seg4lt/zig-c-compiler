@@ -23,7 +23,9 @@ fn resolvePg(s: Self, pg: *Ast.Program) SemaError!void {
     var new_scope = ScopeIdents.init(s.arena);
 
     const can_have_body = true;
-    try s.resolveFnDecl(pg.@"fn", &new_scope, can_have_body);
+    for (pg.fns.items) |it| {
+        try s.resolveFnDecl(it, &new_scope, can_have_body);
+    }
 }
 
 fn semaError(p: Self, e: SemaError, line: usize, start: usize, comptime fmt: []const u8, args: anytype) SemaError!noreturn {
@@ -32,7 +34,6 @@ fn semaError(p: Self, e: SemaError, line: usize, start: usize, comptime fmt: []c
 }
 
 fn resolveFnDecl(s: Self, fn_decl: *Ast.FnDecl, scope: *ScopeIdents, can_have_body: bool) SemaError!void {
-    _ = can_have_body;
     if (scope.get(fn_decl.name)) |saved_name| {
         if (saved_name.type == .Fn and saved_name.has_body) {
             try s.semaError(
@@ -58,10 +59,50 @@ fn resolveFnDecl(s: Self, fn_decl: *Ast.FnDecl, scope: *ScopeIdents, can_have_bo
         .type = .Fn,
         .external_linkage = true,
         .name = fn_decl.name,
-        .has_body = true,
+        .has_body = fn_decl.body != null,
     };
     scope.put(fn_decl.name, ident) catch unreachable;
-    try s.resolveBlock(fn_decl.body, scope);
+
+    var scope_for_fn_param = createNewScope(scope);
+
+    for (fn_decl.params.items) |param| {
+        if (scope_for_fn_param.get(param.ident)) |entry| {
+            if (entry.from_current_scope) {
+                try s.semaError(
+                    SemaError.DuplicateIdentifier,
+                    param.loc.line,
+                    param.loc.start,
+                    "duplicate parameter name `{s}` found in function `{s}`\n",
+                    .{ param.ident, fn_decl.name },
+                );
+            }
+        }
+
+        const mapped_ident = makeVar(s.arena, s.random, param.ident);
+
+        const param_ident = Ident{
+            .from_current_scope = true,
+            .type = .Var,
+            .external_linkage = false,
+            .name = mapped_ident,
+            .has_body = false,
+        };
+
+        scope_for_fn_param.put(param.ident, param_ident) catch unreachable;
+        param.ident = mapped_ident;
+    }
+
+    if (!can_have_body and fn_decl.body != null) {
+        try s.semaError(
+            SemaError.InvalidDeclaration,
+            fn_decl.loc.line,
+            fn_decl.loc.start,
+            "function declaration cannot have body: {s}",
+            .{fn_decl.name},
+        );
+    }
+
+    if (fn_decl.body) |body| try s.resolveBlock(body, &scope_for_fn_param);
 }
 
 fn resolveBlock(s: Self, block: *Ast.Block, scope: *ScopeIdents) SemaError!void {
@@ -170,6 +211,35 @@ fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
 
 fn resolveExpr(s: Self, expr: *Ast.Expr, scope: *ScopeIdents) SemaError!void {
     switch (expr.*) {
+        .FnCall => |*fn_call| {
+            const ident = scope.get(fn_call.ident) orelse {
+                try s.semaError(
+                    SemaError.UndeclaredVariable,
+                    fn_call.loc.line,
+                    fn_call.loc.start,
+                    "undeclared function: {s}",
+                    .{fn_call.ident},
+                );
+            };
+
+            if (ident.type != .Fn) {
+                try s.semaError(
+                    SemaError.InvalidDeclaration,
+                    fn_call.loc.line,
+                    fn_call.loc.start,
+                    "expected function, found: {s}",
+                    .{ident.name},
+                );
+            }
+
+            if (ident.from_current_scope) {
+                fn_call.ident = ident.name;
+            }
+
+            for (fn_call.args.items) |arg| {
+                try s.resolveExpr(arg, scope);
+            }
+        },
         .Ternary => |ternary_expr| {
             try s.resolveExpr(ternary_expr.condition, scope);
             try s.resolveExpr(ternary_expr.then, scope);

@@ -1,6 +1,7 @@
 arena: Allocator,
 scratch_arena: Allocator,
 writer: AnyWriter,
+symbol_table: *SymbolTable,
 
 const Self = @This();
 
@@ -9,6 +10,7 @@ const Options = struct {
     scratch_arena: Allocator,
     src_path_no_ext: []const u8,
     pg: Asm.Program,
+    symbol_table: *SymbolTable,
     print: bool = false,
 };
 
@@ -17,6 +19,7 @@ pub fn emit(opt: Options) !void {
     const s = Self{
         .arena = opt.arena,
         .scratch_arena = opt.scratch_arena,
+        .symbol_table = opt.symbol_table,
         .writer = buffer.writer().any(),
     };
     s.emitProgram(opt.pg);
@@ -36,12 +39,18 @@ fn emitProgram(s: Self, pg: Asm.Program) void {
         const progbits = "\t.section .note.GNU-stack,\"\",@progbits\n";
         s.write(progbits);
     };
-    s.emitFnDecl(pg.fn_defn);
+    for (pg.fns.items) |fn_defn| {
+        s.emitFnDecl(fn_defn);
+    }
 }
 
 fn emitFnDecl(s: Self, fn_decl: Asm.FnDefn) void {
     s.writeFmt("\t.globl\t{s}\n", .{fn_decl.name});
-    s.writeFmt("{s}:\n", .{fn_decl.name});
+    switch (builtin.os.tag) {
+        .linux => s.writeFmt("{s}:\n", .{fn_decl.name}),
+        .macos => s.writeFmt("_{s}:\n", .{fn_decl.name}),
+        else => |os| std.debug.panic("Unsupported OS for code emission: {s}", .{@tagName(os)}),
+    }
 
     // prologue
     s.writeFmt("\tpushq\t{any}\n", .{Asm.Register.register(.bp, .qword)});
@@ -52,6 +61,30 @@ fn emitFnDecl(s: Self, fn_decl: Asm.FnDefn) void {
 
 fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
     switch (instruction) {
+        .Call => |call| {
+            switch (builtin.os.tag) {
+                .linux => {
+                    var add_plt = false;
+                    if (s.symbol_table.get(call)) |symbol| {
+                        if (symbol == .Fn and !symbol.Fn.defined) {
+                            add_plt = true;
+                        }
+                    }
+                    s.writeFmt("\tcall\t{s}", .{call});
+                    s.writeFmt("{s}\n", .{if (!add_plt) "" else "@PLT"});
+                },
+                .macos => {
+                    s.writeFmt("\tcall\t_{s}\n", .{call});
+                },
+                else => |os| std.debug.panic("Unsupported OS for code emission: {s}", .{@tagName(os)}),
+            }
+        },
+        .DeallocateStack => |size| {
+            s.writeFmt("\taddq\t${d}, {any}\n", .{ size, Asm.Register.register(.sp, .qword) });
+        },
+        .Push => |push| {
+            s.writeFmt("\tpushq\t{s}\n", .{s.fmtOperand(push)});
+        },
         .Mov => |mov| {
             s.writeFmt("\tmovl\t{s}, {s}\n", .{
                 s.fmtOperand(mov.src),
@@ -181,3 +214,4 @@ const builtin = @import("builtin");
 const Asm = @import("Codegen.zig").Asm;
 const AnyWriter = std.io.AnyWriter;
 const Allocator = std.mem.Allocator;
+const SymbolTable = @import("SymbolTable.zig");
