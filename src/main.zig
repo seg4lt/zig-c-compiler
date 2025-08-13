@@ -1,3 +1,4 @@
+const Arena = @import("Arena.zig");
 pub fn main() !void {
     const gpa, const deinit = getAllocator();
     defer if (deinit) {

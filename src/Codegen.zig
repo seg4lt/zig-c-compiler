@@ -343,9 +343,8 @@ const Stage3 = struct {
 
     fn fixFn(s: @This(), fn_defn: Asm.FnDefn) Asm.FnDefn {
         var instructions = ArrayList(Asm.Instruction).init(s.arena);
-
-        var aligned_stack_size: usize = fn_defn.stack_size;
-        if (aligned_stack_size % STACK_ALIGNMENT != 0) aligned_stack_size += (STACK_ALIGNMENT - (aligned_stack_size % STACK_ALIGNMENT));
+        const ALIGNMENT: usize = STACK_ALIGNMENT;
+        const aligned_stack_size = (fn_defn.stack_size + ALIGNMENT - 1) & ~(ALIGNMENT - 1);
 
         instructions.append(.allocateStack(aligned_stack_size)) catch unreachable;
         for (fn_defn.instructions.items) |inst| {

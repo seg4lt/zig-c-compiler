@@ -1,51 +1,54 @@
+// const ArenaAllocator2 = std.heap.ArenaAllocator;
+const ArenaAllocator = @import("Arena.zig");
+
 // Note: Probably need to decompose this entity - lots of things are stored here, but maybe this is fine
 gpa: Allocator,
-scratch_arena_state: *std.heap.ArenaAllocator,
-lexer_arena_state: ?*std.heap.ArenaAllocator,
-parser_arena_state: ?*std.heap.ArenaAllocator,
-sema_arena_state: ?*std.heap.ArenaAllocator,
-tacky_arena_state: ?*std.heap.ArenaAllocator,
-codegen_arena_state: ?*std.heap.ArenaAllocator,
-code_emission_arena_state: ?*std.heap.ArenaAllocator,
+scratch_arena_state: *ArenaAllocator,
+lexer_arena_state: ?*ArenaAllocator,
+parser_arena_state: ?*ArenaAllocator,
+sema_arena_state: ?*ArenaAllocator,
+tacky_arena_state: ?*ArenaAllocator,
+codegen_arena_state: ?*ArenaAllocator,
+code_emission_arena_state: ?*ArenaAllocator,
 
-symbol_arena: *std.heap.ArenaAllocator,
+symbol_arena: *ArenaAllocator,
 symbol_table: SymbolTable,
 
 error_reporter: *ErrorReporter,
-error_reporter_arena_state: *std.heap.ArenaAllocator,
+error_reporter_arena_state: *ArenaAllocator,
 
 random: std.Random,
 
 const Self = @This();
 
 pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
-    const symbol_arena = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    symbol_arena.* = std.heap.ArenaAllocator.init(gpa);
+    const symbol_arena = gpa.create(ArenaAllocator) catch unreachable;
+    symbol_arena.* = ArenaAllocator.init(gpa);
     const symbol_table = SymbolTable.init(symbol_arena.allocator());
 
-    const arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    arena_state.* = std.heap.ArenaAllocator.init(gpa);
+    const arena_state = gpa.create(ArenaAllocator) catch unreachable;
+    arena_state.* = ArenaAllocator.init(gpa);
 
-    const lexer_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    lexer_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+    const lexer_arena_state = gpa.create(ArenaAllocator) catch unreachable;
+    lexer_arena_state.* = ArenaAllocator.init(gpa);
 
-    const parser_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    parser_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+    const parser_arena_state = gpa.create(ArenaAllocator) catch unreachable;
+    parser_arena_state.* = ArenaAllocator.init(gpa);
 
-    const sema_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    sema_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+    const sema_arena_state = gpa.create(ArenaAllocator) catch unreachable;
+    sema_arena_state.* = ArenaAllocator.init(gpa);
 
-    const tacky_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    tacky_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+    const tacky_arena_state = gpa.create(ArenaAllocator) catch unreachable;
+    tacky_arena_state.* = ArenaAllocator.init(gpa);
 
-    const codegen_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    codegen_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+    const codegen_arena_state = gpa.create(ArenaAllocator) catch unreachable;
+    codegen_arena_state.* = ArenaAllocator.init(gpa);
 
-    const code_emission_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    code_emission_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+    const code_emission_arena_state = gpa.create(ArenaAllocator) catch unreachable;
+    code_emission_arena_state.* = ArenaAllocator.init(gpa);
 
-    const error_reporter_arena_state = gpa.create(std.heap.ArenaAllocator) catch unreachable;
-    error_reporter_arena_state.* = std.heap.ArenaAllocator.init(gpa);
+    const error_reporter_arena_state = gpa.create(ArenaAllocator) catch unreachable;
+    error_reporter_arena_state.* = ArenaAllocator.init(gpa);
     const error_arena = error_reporter_arena_state.allocator();
 
     const error_reporter = error_arena.create(ErrorReporter) catch unreachable;
@@ -95,7 +98,7 @@ pub fn scratchArena(self: *const Self) Allocator {
     return self.scratch_arena_state.allocator();
 }
 
-pub fn resetScratchArena(self: *const Self) void {
+pub fn resetScratchArena(self: *Self) void {
     _ = self.scratch_arena_state.reset(.retain_capacity);
 }
 
