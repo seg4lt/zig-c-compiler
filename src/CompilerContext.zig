@@ -1,5 +1,5 @@
 // const ArenaAllocator2 = std.heap.ArenaAllocator;
-const ArenaAllocator = @import("Arena.zig");
+const ArenaAllocator = @import("from_scratch.zig").Arena;
 
 // Note: Probably need to decompose this entity - lots of things are stored here, but maybe this is fine
 gpa: Allocator,

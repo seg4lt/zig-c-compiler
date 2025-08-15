@@ -59,5 +59,6 @@ pub const FnParam = struct {
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("from_scratch.zig").ArrayList;
 const StringHashMap = std.StringHashMap;

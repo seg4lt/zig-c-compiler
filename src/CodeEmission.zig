@@ -15,7 +15,7 @@ const Options = struct {
 };
 
 pub fn emit(opt: Options) !void {
-    var buffer = std.ArrayList(u8).init(opt.arena);
+    var buffer = ArrayList(u8).init(opt.arena);
     const s = Self{
         .arena = opt.arena,
         .scratch_arena = opt.scratch_arena,
@@ -192,7 +192,7 @@ fn fmtUnaryOperator(operator: Asm.UnaryOperator) []const u8 {
 fn fmtOperand(s: Self, op: Asm.Operand) []const u8 {
     return switch (op) {
         .Imm => |imm| std.fmt.allocPrint(s.arena, "${d}", .{imm}) catch unreachable,
-        .Register => |r| std.fmt.allocPrint(s.arena, "{any}", .{r}) catch unreachable,
+        .Register => |r| std.fmt.allocPrint(s.arena, "{f}", .{r}) catch unreachable,
         .Stack => |stack_size| std.fmt.allocPrint(s.arena, "{d}({any})", .{
             stack_size,
             Asm.Register.register(.bp, .qword),
@@ -212,6 +212,7 @@ fn writeFmt(s: Self, comptime fmt: []const u8, args: anytype) void {
 const std = @import("std");
 const builtin = @import("builtin");
 const Asm = @import("Codegen.zig").Asm;
+const ArrayList = @import("from_scratch.zig").ArrayList;
 const AnyWriter = std.io.AnyWriter;
 const Allocator = std.mem.Allocator;
 const SymbolTable = @import("SymbolTable.zig");

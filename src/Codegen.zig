@@ -42,7 +42,7 @@ const Stage1 = struct {
 
         for (pg.fns.items) |fn_defn| {
             const fn_asm = s.emitFnDefn(fn_defn);
-            fns.append(fn_asm) catch unreachable;
+            fns.append(fn_asm);
         }
         return .{ .fns = fns };
     }
@@ -65,21 +65,21 @@ const Stage1 = struct {
         for (register_args, 0..) |reg_param, i| {
             const reg_to_use = ARGS_REGISTER[i];
             const asm_arg: Asm.Operand = .pseudo(reg_param.ident);
-            instructions.append(.mov(.register(reg_to_use, .dword), asm_arg)) catch unreachable;
+            instructions.append(.mov(.register(reg_to_use, .dword), asm_arg));
         }
 
         for (stack_args, 0..) |stack_param, i| {
             const asm_arg: Asm.Operand = .pseudo(stack_param.ident);
             const offset: i64 = STACK_ALIGNMENT + (@as(i64, @intCast(i)) * PUSH_SIZE);
             const stack_offset: Asm.Operand = .stack(offset);
-            instructions.append(.mov(stack_offset, asm_arg)) catch unreachable;
+            instructions.append(.mov(stack_offset, asm_arg));
         }
 
         for (fn_defn.body.items) |inst| {
             s.emitInst(inst, &instructions);
         }
         return .{
-            .name = std.fmt.allocPrint(s.arena, "{s}", .{fn_defn.name}) catch unreachable,
+            .name = s.arena.dupe(u8, fn_defn.name) catch unreachable,
             .instructions = instructions,
             .stack_size = 0,
         };
@@ -91,46 +91,46 @@ const Stage1 = struct {
                 const src = valToOperand(s.arena, ret);
                 const dst = Asm.Operand.register(.ax, .dword);
 
-                instructions.append(.mov(src, dst)) catch unreachable;
-                instructions.append(.ret()) catch unreachable;
+                instructions.append(.mov(src, dst));
+                instructions.append(.ret());
             },
             .Unary => |unary| {
                 if (unary.operator == .Not) {
                     const zero: Asm.Operand = .imm(0);
                     const src = valToOperand(s.arena, unary.src);
                     const dst = valToOperand(s.arena, unary.dst);
-                    instructions.append(.mov(zero, dst)) catch unreachable;
-                    instructions.append(.cmp(zero, src)) catch unreachable;
-                    instructions.append(.setCC(.EqualEqual, dst)) catch unreachable;
+                    instructions.append(.mov(zero, dst));
+                    instructions.append(.cmp(zero, src));
+                    instructions.append(.setCC(.EqualEqual, dst));
                 } else {
                     const src = valToOperand(s.arena, unary.src);
                     const dst = valToOperand(s.arena, unary.dst);
-                    instructions.append(.mov(src, dst)) catch unreachable;
+                    instructions.append(.mov(src, dst));
                     const operator: Asm.UnaryOperator = switch (unary.operator) {
                         .Negate => .Neg,
                         .BitNot => .BitNot,
                         .Not => std.debug.panic("** Compiler Bug ** Unreachable path: expected negate or bit_not unary operator", .{}),
                     };
-                    instructions.append(.unary(operator, dst)) catch unreachable;
+                    instructions.append(.unary(operator, dst));
                 }
             },
             .Binary => |binary| {
                 switch (binary.operator) {
                     .EqualEqual, .GreaterThan, .GreaterThanEqual, .LessThan, .LessThanEqual, .NotEqual => {
                         const dst = valToOperand(s.arena, binary.dst);
-                        instructions.append(.mov(.imm(0), dst)) catch unreachable;
+                        instructions.append(.mov(.imm(0), dst));
 
                         const src2 = valToOperand(s.arena, binary.right);
                         switch (binary.left) {
                             .Const => {
                                 const src1 = valToOperand(s.arena, binary.left);
                                 const reg: Asm.Operand = .register(.r11, .dword);
-                                instructions.append(.mov(src1, reg)) catch unreachable;
-                                instructions.append(.cmp(src2, reg)) catch unreachable;
+                                instructions.append(.mov(src1, reg));
+                                instructions.append(.cmp(src2, reg));
                             },
                             .Var => {
                                 const src1 = valToOperand(s.arena, binary.left);
-                                instructions.append(.cmp(src2, src1)) catch unreachable;
+                                instructions.append(.cmp(src2, src1));
                             },
                         }
                         const condition_code: Asm.ConditionCode = switch (binary.operator) {
@@ -142,12 +142,12 @@ const Stage1 = struct {
                             .NotEqual => .NotEqual,
                             else => std.debug.panic("** Compiler Bug ** Unreachable path: expected comparison operator", .{}),
                         };
-                        instructions.append(.setCC(condition_code, dst)) catch unreachable;
+                        instructions.append(.setCC(condition_code, dst));
                     },
                     .LeftShift, .RightShift, .BitAnd, .BitOr, .BitXor, .Add, .Subtract, .Multiply => {
                         const left = valToOperand(s.arena, binary.left);
                         const dst = valToOperand(s.arena, binary.dst);
-                        instructions.append(.mov(left, dst)) catch unreachable;
+                        instructions.append(.mov(left, dst));
 
                         const op = switch (binary.operator) {
                             .Add => Asm.BinaryOperator.Add,
@@ -161,17 +161,17 @@ const Stage1 = struct {
                             else => std.debug.panic("** Compiler Bug ** Unreachable path: expected add, sub or mul binary operator", .{}),
                         };
                         const right = valToOperand(s.arena, binary.right);
-                        instructions.append(.binary(op, right, dst)) catch unreachable;
+                        instructions.append(.binary(op, right, dst));
                     },
                     .Divide, .Mod => {
                         const left = valToOperand(s.arena, binary.left);
                         const first_move_dst: Asm.Operand = .register(.ax, .dword);
-                        instructions.append(.mov(left, first_move_dst)) catch unreachable;
+                        instructions.append(.mov(left, first_move_dst));
 
-                        instructions.append(.cdq()) catch unreachable;
+                        instructions.append(.cdq());
 
                         const right = valToOperand(s.arena, binary.right);
-                        instructions.append(.idiv(right)) catch unreachable;
+                        instructions.append(.idiv(right));
 
                         const final_mov_src: Asm.Operand = switch (binary.operator) {
                             .Divide => .register(.ax, .dword),
@@ -179,36 +179,36 @@ const Stage1 = struct {
                             else => std.debug.panic("** Compiler Bug ** Unreachable path: expected divide or mod binary operator", .{}),
                         };
                         const final_mov_dst: Asm.Operand = valToOperand(s.arena, binary.dst);
-                        instructions.append(.mov(final_mov_src, final_mov_dst)) catch unreachable;
+                        instructions.append(.mov(final_mov_src, final_mov_dst));
                     },
                 }
             },
             .Copy => |copy| {
                 const src = valToOperand(s.arena, copy.src);
                 const dst = valToOperand(s.arena, copy.dst);
-                instructions.append(.mov(src, dst)) catch unreachable;
+                instructions.append(.mov(src, dst));
             },
             .Jump => |jmp| {
-                const label = std.fmt.allocPrint(s.arena, "{s}", .{jmp}) catch unreachable;
-                instructions.append(.jmp(label)) catch unreachable;
+                const label = s.arena.dupe(u8, jmp) catch unreachable;
+                instructions.append(.jmp(label));
             },
             .JumpIfZero => |jmp| {
                 const condition = valToOperand(s.arena, jmp.condition);
                 const zero: Asm.Operand = .imm(0);
-                const label = std.fmt.allocPrint(s.arena, "{s}", .{jmp.label}) catch unreachable;
-                instructions.append(.cmp(zero, condition)) catch unreachable;
-                instructions.append(.jmpCC(.EqualEqual, label)) catch unreachable;
+                const label = s.arena.dupe(u8, jmp.label) catch unreachable;
+                instructions.append(.cmp(zero, condition));
+                instructions.append(.jmpCC(.EqualEqual, label));
             },
             .JumpIfNotZero => |jmp| {
                 const condition = valToOperand(s.arena, jmp.condition);
                 const zero: Asm.Operand = .imm(0);
-                const label = std.fmt.allocPrint(s.arena, "{s}", .{jmp.label}) catch unreachable;
-                instructions.append(.cmp(zero, condition)) catch unreachable;
-                instructions.append(.jmpCC(.NotEqual, label)) catch unreachable;
+                const label = s.arena.dupe(u8, jmp.label) catch unreachable;
+                instructions.append(.cmp(zero, condition));
+                instructions.append(.jmpCC(.NotEqual, label));
             },
             .Label => |label| {
-                const owned_label = std.fmt.allocPrint(s.arena, "{s}", .{label}) catch unreachable;
-                instructions.append(.label(owned_label)) catch unreachable;
+                const owned_label = s.arena.dupe(u8, label) catch unreachable;
+                instructions.append(.label(owned_label));
             },
             .FnCall => |fn_call| {
                 const fn_args = fn_call.args.items;
@@ -217,41 +217,41 @@ const Stage1 = struct {
 
                 const stack_padding: usize = if (stack_args.len % 2 == 0) 0 else PUSH_SIZE;
                 if (stack_padding != 0) {
-                    instructions.append(.allocateStack(stack_padding)) catch unreachable;
+                    instructions.append(.allocateStack(stack_padding));
                 }
 
                 for (register_args, 0..) |reg_arg, i| {
                     const reg_to_use = ARGS_REGISTER[i];
                     const asm_arg = valToOperand(s.arena, reg_arg);
-                    instructions.append(.mov(asm_arg, .register(reg_to_use, .dword))) catch unreachable;
+                    instructions.append(.mov(asm_arg, .register(reg_to_use, .dword)));
                 }
 
                 var iter = std.mem.reverseIterator(stack_args);
                 while (iter.next()) |stack_arg| {
                     const asm_arg = valToOperand(s.arena, stack_arg);
                     if (asm_arg == .Register or asm_arg == .Imm) {
-                        instructions.append(.push(asm_arg)) catch unreachable;
+                        instructions.append(.push(asm_arg));
                     } else {
                         // push needs either register or immediate value
-                        instructions.append(.mov(asm_arg, .register(.ax, .dword))) catch unreachable;
-                        instructions.append(.push(.register(.ax, .qword))) catch unreachable;
+                        instructions.append(.mov(asm_arg, .register(.ax, .dword)));
+                        instructions.append(.push(.register(.ax, .qword)));
                     }
                 }
 
-                instructions.append(.call(fn_call.ident)) catch unreachable;
+                instructions.append(.call(fn_call.ident));
                 const bytes_to_pop = (stack_args.len * PUSH_SIZE) + stack_padding;
                 if (bytes_to_pop > 0) {
-                    instructions.append(.deallocateStack(bytes_to_pop)) catch unreachable;
+                    instructions.append(.deallocateStack(bytes_to_pop));
                 }
                 const dst = valToOperand(s.arena, fn_call.dst);
-                instructions.append(.mov(.register(.ax, .dword), dst)) catch unreachable;
+                instructions.append(.mov(.register(.ax, .dword), dst));
             },
         }
     }
     fn valToOperand(allocator: Allocator, val: Tac.Val) Asm.Operand {
         return switch (val) {
             .Const => |constant| .imm(constant),
-            .Var => |ident| .pseudo(std.fmt.allocPrint(allocator, "{s}", .{ident}) catch unreachable),
+            .Var => |ident| .pseudo(allocator.dupe(u8, ident) catch unreachable),
         };
     }
 };
@@ -336,7 +336,7 @@ const Stage3 = struct {
         var fns = ArrayList(Asm.FnDefn).init(s.arena);
         for (pg.fns.items) |it| {
             const fn_defn = s.fixFn(it);
-            fns.append(fn_defn) catch unreachable;
+            fns.append(fn_defn);
         }
         return .{ .fns = fns };
     }
@@ -346,34 +346,34 @@ const Stage3 = struct {
         const ALIGNMENT: usize = STACK_ALIGNMENT;
         const aligned_stack_size = (fn_defn.stack_size + ALIGNMENT - 1) & ~(ALIGNMENT - 1);
 
-        instructions.append(.allocateStack(aligned_stack_size)) catch unreachable;
+        instructions.append(.allocateStack(aligned_stack_size));
         for (fn_defn.instructions.items) |inst| {
             switch (inst) {
                 .Mov => |mov| {
                     if (mov.src == .Stack and mov.dst == .Stack) {
-                        instructions.append(.mov(mov.src, .register(.r10, .dword))) catch unreachable;
-                        instructions.append(.mov(.register(.r10, .dword), mov.dst)) catch unreachable;
+                        instructions.append(.mov(mov.src, .register(.r10, .dword)));
+                        instructions.append(.mov(.register(.r10, .dword), mov.dst));
                         continue;
                     }
-                    instructions.append(inst) catch unreachable;
+                    instructions.append(inst);
                 },
                 .Binary => |binary| {
                     switch (binary.operator) {
                         .LeftShift, .RightShift => {
                             const reg: Asm.Operand = .register(.cx, .dword);
-                            instructions.append(.mov(binary.operand, reg)) catch unreachable;
-                            instructions.append(.binary(binary.operator, reg, binary.dst)) catch unreachable;
+                            instructions.append(.mov(binary.operand, reg));
+                            instructions.append(.binary(binary.operator, reg, binary.dst));
                         },
                         .BitAnd, .BitOr, .BitXor, .Add, .Subtract => {
                             const reg: Asm.Operand = .register(.r10, .dword);
-                            instructions.append(.mov(binary.operand, reg)) catch unreachable;
-                            instructions.append(.binary(binary.operator, reg, binary.dst)) catch unreachable;
+                            instructions.append(.mov(binary.operand, reg));
+                            instructions.append(.binary(binary.operator, reg, binary.dst));
                         },
                         .Multiply => {
                             const reg: Asm.Operand = .register(.r11, .dword);
-                            instructions.append(.mov(binary.dst, reg)) catch unreachable;
-                            instructions.append(.binary(binary.operator, binary.operand, reg)) catch unreachable;
-                            instructions.append(.mov(reg, binary.dst)) catch unreachable;
+                            instructions.append(.mov(binary.dst, reg));
+                            instructions.append(.binary(binary.operator, binary.operand, reg));
+                            instructions.append(.mov(reg, binary.dst));
                         },
                     }
                 },
@@ -381,23 +381,23 @@ const Stage3 = struct {
                     switch (operand) {
                         .Imm => {
                             const reg: Asm.Operand = .register(.r10, .dword);
-                            instructions.append(.mov(operand, reg)) catch unreachable;
-                            instructions.append(.idiv(reg)) catch unreachable;
+                            instructions.append(.mov(operand, reg));
+                            instructions.append(.idiv(reg));
                         },
-                        else => instructions.append(inst) catch unreachable,
+                        else => instructions.append(inst),
                     }
                 },
                 .Cmp => |cmp| {
                     if (cmp.op1 == .Stack and cmp.op2 == .Stack) {
                         const reg: Asm.Operand = .register(.r10, .dword);
-                        instructions.append(.mov(cmp.op1, reg)) catch unreachable;
-                        instructions.append(.cmp(reg, cmp.op2)) catch unreachable;
+                        instructions.append(.mov(cmp.op1, reg));
+                        instructions.append(.cmp(reg, cmp.op2));
                     } else if (cmp.op2 == .Imm) {
                         const reg: Asm.Operand = .register(.r11, .dword);
-                        instructions.append(.mov(cmp.op2, reg)) catch unreachable;
-                        instructions.append(.cmp(cmp.op1, reg)) catch unreachable;
+                        instructions.append(.mov(cmp.op2, reg));
+                        instructions.append(.cmp(cmp.op1, reg));
                     } else {
-                        instructions.append(inst) catch unreachable;
+                        instructions.append(inst);
                     }
                 },
                 .Jmp,
@@ -411,7 +411,7 @@ const Stage3 = struct {
                 .Call,
                 .Push,
                 .DeallocateStack,
-                => instructions.append(inst) catch unreachable,
+                => instructions.append(inst),
             }
         }
         return .{
@@ -429,7 +429,7 @@ pub const Asm = struct {
     pub const FnDefn = struct {
         name: []const u8,
         stack_size: usize,
-        instructions: std.ArrayList(Instruction),
+        instructions: ArrayList(Instruction),
     };
     const Instructions = ArrayList(Instruction);
     pub const Instruction = union(enum) {
@@ -795,6 +795,7 @@ const std = @import("std");
 const Tac = @import("TackyIR.zig").Tac;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayListq
+const ArrayList = @import("from_scratch.zig").ArrayList;
 const HashMap = std.StringHashMap;
 const SymbolTable = @import("SymbolTable.zig");

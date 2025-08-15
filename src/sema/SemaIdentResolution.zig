@@ -338,7 +338,8 @@ fn createNewScope(scope: *ScopeIdents) ScopeIdents {
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const StringHashMap = std.StringHashMap;
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("../from_scratch.zig").ArrayList;
 const ErrorReporter = @import("../ErrorReporter.zig");
 const SemaError = @import("sema_common.zig").SemaError;
 const SemaOptions = @import("sema_common.zig").SemaOptions;

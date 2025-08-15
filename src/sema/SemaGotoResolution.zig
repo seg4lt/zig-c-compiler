@@ -247,7 +247,8 @@ fn semaError(s: Self, e: SemaError, line: usize, start: usize, comptime fmt: []c
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("../from_scratch.zig").ArrayList;
 const StringHashMap = std.StringHashMap;
 const sema_common = @import("sema_common.zig");
 const SemaError = sema_common.SemaError;

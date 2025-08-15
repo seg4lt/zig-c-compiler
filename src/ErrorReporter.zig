@@ -1,4 +1,4 @@
-error_items: std.ArrayList(ErrorItem),
+error_items: ArrayList(ErrorItem),
 src: []const u8,
 src_path: []const u8,
 arena: Allocator,
@@ -14,7 +14,7 @@ pub const ErrorItem = struct {
 
 pub fn init(arena: Allocator, src: []const u8, src_path: []const u8) Self {
     return .{
-        .error_items = std.ArrayList(ErrorItem).init(arena),
+        .error_items = ArrayList(ErrorItem).init(arena),
         .src = src,
         .src_path = src_path,
         .arena = arena,
@@ -29,7 +29,7 @@ pub fn printError(s: *const Self, writer: AnyWriter) void {
 
 pub fn addError(s: *Self, line: usize, start: usize, comptime msg_fmt: []const u8, args: anytype) void {
     const item = getErrorItem(s.arena, s.src, s.src_path, line, start, msg_fmt, args);
-    s.error_items.append(item) catch unreachable;
+    s.error_items.append(item);
 }
 
 fn getErrorItem(
@@ -50,20 +50,20 @@ fn getErrorItem(
         }
     }
     const column = start - cls;
-    var sb = std.ArrayList(u8).init(allocator);
+    var sb = ArrayList(u8).init(allocator);
 
     const error_in = std.fmt.allocPrint(
         allocator,
         "Error in {s}:{d},{d}\n",
         .{ src_path, line, column },
     ) catch unreachable;
-    sb.appendSlice(error_in) catch unreachable;
+    sb.appendSlice(error_in);
 
-    const support_line = std.fmt.allocPrint(allocator, "{s}", .{src[pls..cls]}) catch unreachable;
-    sb.appendSlice(support_line) catch unreachable;
+    const support_line = allocator.dupe(u8, src[pls..cls]) catch unreachable;
+    sb.appendSlice(support_line);
 
     const error_line = std.fmt.allocPrint(allocator, "{s}\n", .{src[cls..cle]}) catch unreachable;
-    sb.appendSlice(error_line) catch unreachable;
+    sb.appendSlice(error_line);
 
     const padding = allocator.alloc(u8, column) catch unreachable;
     @memset(padding, ' ');
@@ -72,9 +72,9 @@ fn getErrorItem(
 
     const final_msg = std.fmt.allocPrint(allocator, "{s}^____ {s}", .{ padding, detail_msg }) catch unreachable;
 
-    sb.appendSlice(final_msg) catch unreachable;
+    sb.appendSlice(final_msg);
 
-    const full_msg = sb.toOwnedSlice() catch unreachable;
+    const full_msg = sb.toOwnedSlice();
     return .{ .msg = full_msg, .file = src_path, .line = line, .column = column };
 }
 
@@ -104,3 +104,4 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
+const ArrayList = @import("from_scratch.zig").ArrayList;

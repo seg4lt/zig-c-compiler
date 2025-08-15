@@ -23,7 +23,7 @@ fn genPg(s: *Self, pg: *const Ast.Program) Tac.Program {
     for (pg.fns.items) |fn_decl| {
         if (fn_decl.body != null) {
             const fn_tacky = s.genFnDefn(fn_decl);
-            fns.append(fn_tacky) catch unreachable;
+            fns.append(fn_tacky);
         }
     }
     return .{ .fns = fns };
@@ -34,10 +34,10 @@ fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.FnDefn {
 
     if (fn_decl.body) |body| {
         s.genBlock(body, &instructions);
-        instructions.append(.ret(.constant(0))) catch unreachable;
+        instructions.append(.ret(.constant(0)));
     }
     return .{
-        .name = std.fmt.allocPrint(s.arena, "{s}", .{fn_decl.name}) catch unreachable,
+        .name = s.arena.dupe(u8, fn_decl.name) catch unreachable,
         .body = instructions,
     };
 }
@@ -60,8 +60,8 @@ fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction))
         .Var => |var_decl| {
             if (var_decl.init) |initializer| {
                 const result = s.genExpr(initializer, instructions);
-                const dst: Tac.Val = .variable(std.fmt.allocPrint(s.arena, "{s}", .{var_decl.ident}) catch unreachable);
-                instructions.append(.copy(result, dst)) catch unreachable;
+                const dst: Tac.Val = .variable(s.arena.dupe(u8, var_decl.ident) catch unreachable);
+                instructions.append(.copy(result, dst));
             }
             // variable with just declaration can be ignored, it has served its purpose
         },
@@ -80,15 +80,15 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
             if (case_stmt.label == null) {
                 std.debug.panic("** Compiler Bug ** case statement should have label as part of sema loop labeling phase", .{});
             }
-            const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{case_stmt.label.?}) catch unreachable;
-            instructions.append(.label(owned_ident)) catch unreachable;
+            const owned_ident = s.arena.dupe(u8, case_stmt.label.?) catch unreachable;
+            instructions.append(.label(owned_ident));
         },
         .Default => |default_stmt| {
             if (default_stmt.label == null) {
                 std.debug.panic("** Compiler Bug ** default statement should have label as part of sema loop labeling phase", .{});
             }
-            const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{default_stmt.label.?}) catch unreachable;
-            instructions.append(.label(owned_ident)) catch unreachable;
+            const owned_ident = s.arena.dupe(u8, default_stmt.label.?) catch unreachable;
+            instructions.append(.label(owned_ident));
         },
         .Break => |break_stmt| {
             if (break_stmt.ident == null) {
@@ -97,7 +97,7 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
             // Any other way?
             // this label needs to match with once defined in the loop
             const jump_label = std.fmt.allocPrint(s.arena, "{s}_end", .{break_stmt.ident.?}) catch unreachable;
-            instructions.append(.jump(jump_label)) catch unreachable;
+            instructions.append(.jump(jump_label));
         },
         .Continue => |continue_stmt| {
             if (continue_stmt.ident == null) {
@@ -106,7 +106,7 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
             // Any other way?
             // this label needs to match with once defined in the loop
             const jump_label = std.fmt.allocPrint(s.arena, "{s}_post_expr", .{continue_stmt.ident.?}) catch unreachable;
-            instructions.append(.jump(jump_label)) catch unreachable;
+            instructions.append(.jump(jump_label));
         },
         .DoWhile => |do_stmt| {
             if (do_stmt.label == null) {
@@ -121,15 +121,15 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
             // Maybe there is a better way to do this but..... this is what we have for now
             const loop_post_expr_label = std.fmt.allocPrint(s.arena, "{s}_post_expr", .{do_stmt.label.?}) catch unreachable;
 
-            instructions.append(.label(loop_start_label)) catch unreachable;
+            instructions.append(.label(loop_start_label));
 
             s.genStmt(do_stmt.body, instructions);
 
-            instructions.append(.label(loop_post_expr_label)) catch unreachable;
+            instructions.append(.label(loop_post_expr_label));
             const condition = s.genExpr(do_stmt.condition, instructions);
-            instructions.append(.jumpIfNotZero(condition, loop_start_label)) catch unreachable;
+            instructions.append(.jumpIfNotZero(condition, loop_start_label));
 
-            instructions.append(.label(loop_end_label)) catch unreachable;
+            instructions.append(.label(loop_end_label));
         },
         .While => |while_stmt| {
             if (while_stmt.label == null) {
@@ -144,16 +144,16 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
             // Maybe there is a better way to do this but..... this is what we have for now
             const loop_post_expr_label = std.fmt.allocPrint(s.arena, "{s}_post_expr", .{while_stmt.label.?}) catch unreachable;
 
-            instructions.append(.label(loop_start_label)) catch unreachable;
-            instructions.append(.label(loop_post_expr_label)) catch unreachable;
+            instructions.append(.label(loop_start_label));
+            instructions.append(.label(loop_post_expr_label));
 
             const condition = s.genExpr(while_stmt.condition, instructions);
-            instructions.append(.jumpIfZero(condition, loop_end_label)) catch unreachable;
+            instructions.append(.jumpIfZero(condition, loop_end_label));
 
             s.genStmt(while_stmt.body, instructions);
 
-            instructions.append(.jump(loop_post_expr_label)) catch unreachable;
-            instructions.append(.label(loop_end_label)) catch unreachable;
+            instructions.append(.jump(loop_post_expr_label));
+            instructions.append(.label(loop_end_label));
         },
         .For => |for_stmt| {
             if (for_stmt.label == null) {
@@ -169,64 +169,64 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
             }
 
             // jump to loop start - as first time you come into this phase, you don't want to run post expr
-            instructions.append(.jump(loop_start_label)) catch unreachable;
+            instructions.append(.jump(loop_start_label));
 
-            instructions.append(.label(loop_post_expr_label)) catch unreachable;
+            instructions.append(.label(loop_post_expr_label));
 
             if (for_stmt.post) |post_expr| {
                 _ = s.genExpr(post_expr, instructions);
             }
 
             // Loop start - includes the condition and jump to body if needed
-            instructions.append(.label(loop_start_label)) catch unreachable;
+            instructions.append(.label(loop_start_label));
 
             if (for_stmt.condition) |condition| {
                 const condition_result = s.genExpr(condition, instructions);
-                instructions.append(.jumpIfZero(condition_result, loop_end_label)) catch unreachable;
+                instructions.append(.jumpIfZero(condition_result, loop_end_label));
             }
 
             s.genStmt(for_stmt.body, instructions);
 
-            instructions.append(.jump(loop_post_expr_label)) catch unreachable;
-            instructions.append(.label(loop_end_label)) catch unreachable;
+            instructions.append(.jump(loop_post_expr_label));
+            instructions.append(.label(loop_end_label));
         },
         .Label => |label_stmt| {
-            const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{label_stmt.ident}) catch unreachable;
+            const owned_ident = s.arena.dupe(u8, label_stmt.ident) catch unreachable;
             const label: Tac.Instruction = .label(owned_ident);
 
-            instructions.append(label) catch unreachable;
+            instructions.append(label);
             s.genStmt(label_stmt.stmt, instructions);
         },
         .Goto => |goto_stmt| {
-            const owned_ident = std.fmt.allocPrint(s.arena, "{s}", .{goto_stmt.ident}) catch unreachable;
-            instructions.append(.jump(owned_ident)) catch unreachable;
+            const owned_ident = s.arena.dupe(u8, goto_stmt.ident) catch unreachable;
+            instructions.append(.jump(owned_ident));
         },
         .If => |if_stmt| {
             const if_end_label = s.makeLabel("if_end");
             const condition = s.genExpr(if_stmt.condition, instructions);
 
             const else_block = if_stmt.@"else" orelse {
-                instructions.append(.jumpIfZero(condition, if_end_label.Label)) catch unreachable;
+                instructions.append(.jumpIfZero(condition, if_end_label.Label));
                 s.genStmt(if_stmt.then, instructions);
-                instructions.append(if_end_label) catch unreachable;
+                instructions.append(if_end_label);
                 return;
             };
             const else_label = s.makeLabel("else");
-            instructions.append(.jumpIfZero(condition, else_label.Label)) catch unreachable;
+            instructions.append(.jumpIfZero(condition, else_label.Label));
 
             s.genStmt(if_stmt.then, instructions);
-            instructions.append(.jump(if_end_label.Label)) catch unreachable;
+            instructions.append(.jump(if_end_label.Label));
 
-            instructions.append(else_label) catch unreachable;
+            instructions.append(else_label);
             s.genStmt(else_block, instructions);
 
-            instructions.append(if_end_label) catch unreachable;
+            instructions.append(if_end_label);
         },
         .Compound => |compound_stmt| s.genBlock(compound_stmt.body, instructions),
         .Expr => |expr_stmt| _ = s.genExpr(expr_stmt.expr, instructions),
         .Return => |ret| {
             const ret_val = s.genExpr(ret.expr, instructions);
-            instructions.append(.ret(ret_val)) catch unreachable;
+            instructions.append(.ret(ret_val));
         },
         .Null => {}, //noop
     }
@@ -246,31 +246,31 @@ fn genSwitchStmt(s: *Self, stmt: Ast.SwitchStmt, instructions: *ArrayList(Tac.In
         // we create an expression to check if matches case we have
         const case_value: Tac.Val = .constant(std.fmt.parseInt(u32, label.value, 10) catch unreachable);
         const condition = s.makeVar();
-        instructions.append(.binary(.EqualEqual, condition_expr, case_value, condition)) catch unreachable;
+        instructions.append(.binary(.EqualEqual, condition_expr, case_value, condition));
 
         // we gen the instruction for the expr we created
         // if it mathces, we jump the the case label
-        const owned_label = std.fmt.allocPrint(s.arena, "{s}", .{label.label}) catch unreachable;
-        instructions.append(.jumpIfNotZero(condition, owned_label)) catch unreachable;
+        const owned_label = s.arena.dupe(u8, label.label) catch unreachable;
+        instructions.append(.jumpIfNotZero(condition, owned_label));
     }
     // handling default case separately as this is if nothing matches
     for (stmt.case_labels.?.items) |label| {
         if (!label.is_default) continue;
-        const owned_label = std.fmt.allocPrint(s.arena, "{s}", .{label.label}) catch unreachable;
-        instructions.append(.jump(owned_label)) catch unreachable;
+        const owned_label = s.arena.dupe(u8, label.label) catch unreachable;
+        instructions.append(.jump(owned_label));
     }
 
     // by this point we have added required jump instructions to correct cases
     // if nothing maches we need to go to end to the switch
     const switch_end_label = std.fmt.allocPrint(s.arena, "{s}_end", .{stmt.label.?}) catch unreachable;
-    instructions.append(.jump(switch_end_label)) catch unreachable;
+    instructions.append(.jump(switch_end_label));
 
     // now add instruction for all cases
     var body = stmt.body;
     s.genBlockItem(&body, instructions);
 
     // this is to mark end of switch to jump if nothing matches
-    instructions.append(.label(switch_end_label)) catch unreachable;
+    instructions.append(.label(switch_end_label));
 }
 
 fn recurseGetGroupInnerExpr(expr: *Ast.Expr) *Ast.Expr {
@@ -286,12 +286,12 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
             const dst = s.makeVar();
             switch (prefix_expr.operator) {
                 .Add => {
-                    instructions.append(.binary(.Add, inner_expr_result, one, dst)) catch unreachable;
-                    instructions.append(.copy(dst, inner_expr_result)) catch unreachable;
+                    instructions.append(.binary(.Add, inner_expr_result, one, dst));
+                    instructions.append(.copy(dst, inner_expr_result));
                 },
                 .Subtract => {
-                    instructions.append(.binary(.Subtract, inner_expr_result, one, dst)) catch unreachable;
-                    instructions.append(.copy(dst, inner_expr_result)) catch unreachable;
+                    instructions.append(.binary(.Subtract, inner_expr_result, one, dst));
+                    instructions.append(.copy(dst, inner_expr_result));
                 },
             }
             return inner_expr_result;
@@ -301,10 +301,10 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
 
             for (fn_call.args.items) |arg| {
                 const arg_val = s.genExpr(arg, instructions);
-                args.append(arg_val) catch unreachable;
+                args.append(arg_val);
             }
             const dst = s.makeVar();
-            instructions.append(.fnCall(fn_call.ident, args, dst)) catch unreachable;
+            instructions.append(.fnCall(fn_call.ident, args, dst));
             return dst;
         },
         .Ternary => |ternary_expr| {
@@ -315,19 +315,19 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
 
             const condition = s.genExpr(ternary_expr.condition, instructions);
 
-            instructions.append(.jumpIfZero(condition, ternary_else.Label)) catch unreachable;
+            instructions.append(.jumpIfZero(condition, ternary_else.Label));
 
             // true
             const then_result = s.genExpr(ternary_expr.then, instructions);
-            instructions.append(.copy(then_result, dst)) catch unreachable;
-            instructions.append(.jump(ternary_end.Label)) catch unreachable;
+            instructions.append(.copy(then_result, dst));
+            instructions.append(.jump(ternary_end.Label));
 
             // false
-            instructions.append(ternary_else) catch unreachable;
+            instructions.append(ternary_else);
             const else_result = s.genExpr(ternary_expr.@"else", instructions);
-            instructions.append(.copy(else_result, dst)) catch unreachable;
+            instructions.append(.copy(else_result, dst));
 
-            instructions.append(ternary_end) catch unreachable;
+            instructions.append(ternary_end);
             return dst;
         },
         .Postfix => |postfix| {
@@ -335,31 +335,31 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
             const prev_result_var = s.makeVar();
             const prev_value: Tac.Instruction = .copy(expr_result, prev_result_var);
 
-            instructions.append(prev_value) catch unreachable;
+            instructions.append(prev_value);
 
             const one: Tac.Val = .constant(1);
             switch (postfix.operator) {
                 .Add => {
                     const dst = s.makeVar();
-                    instructions.append(.binary(.Add, expr_result, one, dst)) catch unreachable;
-                    instructions.append(.copy(dst, expr_result)) catch unreachable;
+                    instructions.append(.binary(.Add, expr_result, one, dst));
+                    instructions.append(.copy(dst, expr_result));
                 },
                 .Subtract => {
                     const dst = s.makeVar();
-                    instructions.append(.binary(.Subtract, expr_result, one, dst)) catch unreachable;
-                    instructions.append(.copy(dst, expr_result)) catch unreachable;
+                    instructions.append(.binary(.Subtract, expr_result, one, dst));
+                    instructions.append(.copy(dst, expr_result));
                 },
             }
             return prev_result_var;
         },
-        .Var => |variable| .variable(std.fmt.allocPrint(s.arena, "{s}", .{variable.ident}) catch unreachable),
+        .Var => |variable| .variable(s.arena.dupe(u8, variable.ident) catch unreachable),
         .Assignment => |assignment| {
             const result = s.genExpr(assignment.src, instructions);
             if (assignment.dst.* != .Var) {
                 std.debug.panic("** Compiler Bug ** assignment dst has to be a var. Sema phase should have caught this!!!", .{});
             }
-            const dst: Tac.Val = .variable(std.fmt.allocPrint(s.arena, "{s}", .{assignment.dst.Var.ident}) catch unreachable);
-            instructions.append(.copy(result, dst)) catch unreachable;
+            const dst: Tac.Val = .variable(s.arena.dupe(u8, assignment.dst.Var.ident) catch unreachable);
+            instructions.append(.copy(result, dst));
             return dst;
         },
         .Constant => |constant| .constant(constant.value),
@@ -371,7 +371,7 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
                 .BitNot => .BitNot,
                 .Not => .Not,
             };
-            instructions.append(.unary(operator, src, dst)) catch unreachable;
+            instructions.append(.unary(operator, src, dst));
             return dst;
         },
         .Binary => |binary| {
@@ -382,24 +382,24 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
                     const false_label = s.makeLabel("and_condition_false");
                     const src1 = s.genExpr(binary.left, instructions);
                     // short-circuit evaluation for 'and'
-                    instructions.append(.jumpIfZero(src1, false_label.Label)) catch unreachable;
+                    instructions.append(.jumpIfZero(src1, false_label.Label));
                     const src2 = s.genExpr(binary.right, instructions);
-                    instructions.append(.jumpIfZero(src2, false_label.Label)) catch unreachable;
+                    instructions.append(.jumpIfZero(src2, false_label.Label));
 
                     // both conditions are true, dst = 1
                     const result = s.makeVar();
                     const one: Tac.Val = .constant(1);
-                    instructions.append(.copy(one, result)) catch unreachable;
+                    instructions.append(.copy(one, result));
                     const end_label = s.makeLabel("and_condition_end");
-                    instructions.append(.jump(end_label.Label)) catch unreachable;
+                    instructions.append(.jump(end_label.Label));
 
                     // if condition is false
-                    instructions.append(false_label) catch unreachable;
+                    instructions.append(false_label);
                     const zero: Tac.Val = .constant(0);
-                    instructions.append(.copy(zero, result)) catch unreachable;
+                    instructions.append(.copy(zero, result));
 
                     // end
-                    instructions.append(end_label) catch unreachable;
+                    instructions.append(end_label);
                     return result;
                 },
                 .Or => {
@@ -408,22 +408,22 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
                     const true_label = s.makeLabel("or_condition_true");
 
                     const src1 = s.genExpr(binary.left, instructions);
-                    instructions.append(.jumpIfNotZero(src1, true_label.Label)) catch unreachable;
+                    instructions.append(.jumpIfNotZero(src1, true_label.Label));
 
                     const src2 = s.genExpr(binary.right, instructions);
-                    instructions.append(.jumpIfNotZero(src2, true_label.Label)) catch unreachable;
+                    instructions.append(.jumpIfNotZero(src2, true_label.Label));
 
                     const result = s.makeVar();
                     const zero: Tac.Val = .constant(0);
-                    instructions.append(.copy(zero, result)) catch unreachable;
+                    instructions.append(.copy(zero, result));
 
                     const end_label = s.makeLabel("or_condition_end");
-                    instructions.append(.jump(end_label.Label)) catch unreachable;
-                    instructions.append(true_label) catch unreachable;
+                    instructions.append(.jump(end_label.Label));
+                    instructions.append(true_label);
 
                     const one: Tac.Val = .constant(1);
-                    instructions.append(.copy(one, result)) catch unreachable;
-                    instructions.append(end_label) catch unreachable;
+                    instructions.append(.copy(one, result));
+                    instructions.append(end_label);
 
                     return result;
                 },
@@ -450,7 +450,7 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
                         .GreaterThanEqual => Tac.BinaryOperator.GreaterThanEqual,
                         .And, .Or => std.debug.panic("** Compiler Bug ** - 'and' and 'or' should be handled differently!!!", .{}),
                     };
-                    instructions.append(.binary(op, left, right, dst)) catch unreachable;
+                    instructions.append(.binary(op, left, right, dst));
                     return dst;
                 },
             }
@@ -730,6 +730,7 @@ const TackyIRPrinter = struct {
 
 const std = @import("std");
 const Ast = @import("AstParser.zig").Ast;
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("from_scratch.zig").ArrayList;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;

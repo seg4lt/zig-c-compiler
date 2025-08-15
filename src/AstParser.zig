@@ -59,7 +59,7 @@ fn parseProgram(p: *Self) ParseError!*Ast.Program {
     var fns = ArrayList(*Ast.FnDecl).init(p.arena);
     while (!p.isAtEnd()) {
         const fn_decl: *Ast.FnDecl = try p.parseFnDecl(.{});
-        fns.append(fn_decl) catch unreachable;
+        fns.append(fn_decl);
     }
     return .init(p.arena, fns);
 }
@@ -95,7 +95,7 @@ fn parseBlock(p: *Self) ParseError!*Ast.Block {
 
     while (p.peek().type != .RCurly) {
         const item = try p.parseBlockItem();
-        body.append(item) catch unreachable;
+        body.append(item);
     }
     _ = try p.consume(.RCurly);
     return .init(p.arena, body, start_token.line, start_token.start);
@@ -162,7 +162,7 @@ fn parseFnParams(p: *Self) ParseError!ArrayList(*Ast.FnParam) {
         const ident = try p.consume(.Ident);
 
         const param: *Ast.FnParam = .fnParam(p.arena, ident.lexeme, ident.line, ident.start);
-        params.append(param) catch unreachable;
+        params.append(param);
 
         // maybe we need to break if we can't find comma?
         if (p.peek().type == .Comma) {
@@ -270,17 +270,17 @@ fn parseSwitchStmt(p: *Self) ParseError!*Ast.Stmt {
                     .{},
                 );
             }
-            body.append(item) catch unreachable;
+            body.append(item);
         }
         _ = try p.consume(.RCurly);
         return .switchStmt(p.arena, condition, body, switch_token.line, switch_token.start);
     }
     const block_item = try p.parseBlockItem();
-    body.append(block_item) catch unreachable;
+    body.append(block_item);
 
     if (block_item.* == .Stmt and block_item.Stmt.* == .Case) {
         const case_stmt = try p.parseBlockItem();
-        body.append(case_stmt) catch unreachable;
+        body.append(case_stmt);
     }
     return .switchStmt(p.arena, condition, body, switch_token.line, switch_token.start);
 }
@@ -441,7 +441,7 @@ fn parseFnArgs(p: *Self) ParseError!ArrayList(*Ast.Expr) {
     _ = try p.consume(.LParen);
     while (p.peek().type != .RParen) {
         const expr = try p.parseExpr(0);
-        args.append(expr) catch unreachable;
+        args.append(expr);
         if (p.peek().type == .Comma) {
             _ = try p.consume(.Comma);
             if (p.peek().type == .RParen) {
@@ -1639,7 +1639,8 @@ const std = @import("std");
 const ErrorReporter = @import("ErrorReporter.zig");
 const Lexer = @import("Lexer.zig");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("from_scratch/ArrayList.zig").ArrayList;
 const TokenType = Lexer.TokenType;
 const Token = Lexer.Token;
 const AnyWriter = std.io.AnyWriter;

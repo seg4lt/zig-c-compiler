@@ -1,5 +1,5 @@
 src: []const u8,
-tokens: std.ArrayList(Token),
+tokens: ArrayList(Token),
 line: usize = 1,
 start: usize = 0,
 current: usize = 0,
@@ -21,7 +21,7 @@ const LexerOptions = struct {
 };
 
 pub fn parseTokens(opt: LexerOptions) LexerError![]const Token {
-    const tokens = std.ArrayList(Token).init(opt.arena);
+    const tokens = ArrayList(Token).init(opt.arena);
     var l = Self{
         .src = opt.src,
         .tokens = tokens,
@@ -56,7 +56,7 @@ fn appendError(s: *Self, comptime fmt: []const u8, args: anytype) void {
     s.current += 1;
 }
 
-pub fn printTokens(tokens: std.ArrayList(Token), writer: std.io.AnyWriter) void {
+pub fn printTokens(tokens: ArrayList(Token), writer: std.io.AnyWriter) void {
     writer.print("-- Lexer Print --\n", .{}) catch unreachable;
     writer.print("{s:>20}{s:>10}{s:>10}{s:>10}{s}\n", .{ "TokenType", "", "Lexeme", "", "Location" }) catch unreachable;
     for (tokens.items) |item| {
@@ -319,7 +319,7 @@ fn addToken(s: *Self, token_type: TokenType) void {
         .line = s.line,
         .start = s.start,
         .type = token_type,
-    }) catch unreachable;
+    });
 }
 
 fn getTokenType(lexeme: []const u8) TokenType {
@@ -442,6 +442,8 @@ const std = @import("std");
 const log = std.log;
 const Allocator = std.mem.Allocator;
 const ErrorReporter = @import("ErrorReporter.zig");
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("from_scratch/ArrayList.zig").ArrayList;
 
 test {
     const tests = @import("tests/lexer_test.zig");

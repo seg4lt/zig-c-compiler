@@ -30,7 +30,7 @@ fn checkPg(s: Self, pg: *Ast.Program) SemaError!void {
 fn checkFn(s: Self, fn_decl: *Ast.FnDecl) SemaError!void {
     var fn_params = ArrayList(SymbolTable.FnParam).init(s.symbol_table.arena);
     for (fn_decl.params.items) |param| {
-        fn_params.append(.fnParam(s.symbol_table.arena, param.ident, "int")) catch unreachable;
+        fn_params.append(.fnParam(s.symbol_table.arena, param.ident, "int"));
     }
 
     const has_body = fn_decl.body != null;
@@ -230,7 +230,8 @@ fn semaError(p: Self, e: SemaError, line: usize, start: usize, comptime fmt: []c
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("../from_scratch.zig").ArrayList;
 const StringHashMap = std.StringHashMap;
 const ErrorReporter = @import("../ErrorReporter.zig");
 const sema_common = @import("sema_common.zig");

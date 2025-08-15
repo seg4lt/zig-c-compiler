@@ -24,7 +24,8 @@ fn print(opt: SemaOptions, label: []const u8) void {
 }
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("../from_scratch.zig").ArrayList;
 const SemaError = @import("sema_common.zig").SemaError;
 const SemaOptions = @import("sema_common.zig").SemaOptions;
 const AstPrinter = @import("../AstParser.zig").AstPrinter;

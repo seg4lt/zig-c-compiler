@@ -82,7 +82,7 @@ fn labelStmt(s: Self, stmt: *Ast.Stmt, labels: *Labels) SemaError!void {
             const case_labels = s.arena.create(ArrayList(Ast.CaseLabel)) catch unreachable;
             case_labels.* = ArrayList(Ast.CaseLabel).init(s.arena);
 
-            labels.append(.switchLabel(s.arena, switch_label, case_labels)) catch unreachable;
+            labels.append(.switchLabel(s.arena, switch_label, case_labels));
 
             var body = switch_stmt.body;
             try s.labelBlockItem(&body, labels);
@@ -119,7 +119,7 @@ fn labelStmt(s: Self, stmt: *Ast.Stmt, labels: *Labels) SemaError!void {
 
             const case_label_ident = makeLabel(s.arena, s.random, "case");
             const case_label: Ast.CaseLabel = .{ .label = case_label_ident, .value = case_stmt.value, .is_default = false };
-            latest_switch_label.case_labels.append(case_label) catch unreachable;
+            latest_switch_label.case_labels.append(case_label);
 
             case_stmt.label = case_label_ident;
         },
@@ -148,7 +148,7 @@ fn labelStmt(s: Self, stmt: *Ast.Stmt, labels: *Labels) SemaError!void {
             default_stmt.label = default_case_label_ident;
 
             const default_case: Ast.CaseLabel = .{ .label = default_case_label_ident, .value = "", .is_default = true };
-            latest_switch_label.case_labels.append(default_case) catch unreachable;
+            latest_switch_label.case_labels.append(default_case);
         },
         .Return => |return_stmt| try s.labelExpr(return_stmt.expr, labels),
         .Expr => |expr_stmt| try s.labelExpr(expr_stmt.expr, labels),
@@ -194,21 +194,21 @@ fn labelStmt(s: Self, stmt: *Ast.Stmt, labels: *Labels) SemaError!void {
         .DoWhile => |*do_stmt| {
             const new_label = makeLabel(s.arena, s.random, "dowhile");
             do_stmt.label = new_label;
-            labels.append(.loopLabel(s.arena, new_label)) catch unreachable;
+            labels.append(.loopLabel(s.arena, new_label));
             try s.labelStmt(do_stmt.body, labels);
             _ = labels.pop();
         },
         .While => |*while_stmt| {
             const new_label = makeLabel(s.arena, s.random, "while");
             while_stmt.label = new_label;
-            labels.append(.loopLabel(s.arena, new_label)) catch unreachable;
+            labels.append(.loopLabel(s.arena, new_label));
             try s.labelStmt(while_stmt.body, labels);
             _ = labels.pop();
         },
         .For => |*for_stmt| {
             const new_label = makeLabel(s.arena, s.random, "for");
             for_stmt.label = new_label;
-            labels.append(.loopLabel(s.arena, new_label)) catch unreachable;
+            labels.append(.loopLabel(s.arena, new_label));
             try s.labelStmt(for_stmt.body, labels);
             _ = labels.pop();
         },
@@ -302,7 +302,8 @@ fn hasDefaultCase(case_labels: *ArrayList(Ast.CaseLabel)) bool {
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const StringHashMap = std.StringHashMap;
-const ArrayList = std.ArrayList;
+// const ArrayList = std.ArrayList;
+const ArrayList = @import("../from_scratch.zig").ArrayList;
 const AstParser = @import("../AstParser.zig");
 const Ast = AstParser.Ast;
 const sema_common = @import("sema_common.zig");
