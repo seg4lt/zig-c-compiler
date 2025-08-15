@@ -273,8 +273,29 @@ fn genSwitchStmt(s: *Self, stmt: Ast.SwitchStmt, instructions: *ArrayList(Tac.In
     instructions.append(.label(switch_end_label)) catch unreachable;
 }
 
+fn recurseGetGroupInnerExpr(expr: *Ast.Expr) *Ast.Expr {
+    if (expr.* != .Group) return expr;
+    return recurseGetGroupInnerExpr(expr.Group.expr);
+}
+
 fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
+        .Prefix => |prefix_expr| {
+            const inner_expr_result = s.genExpr(prefix_expr.expr, instructions);
+            const one: Tac.Val = .constant(1);
+            const dst = s.makeVar();
+            switch (prefix_expr.operator) {
+                .Add => {
+                    instructions.append(.binary(.Add, inner_expr_result, one, dst)) catch unreachable;
+                    instructions.append(.copy(dst, inner_expr_result)) catch unreachable;
+                },
+                .Subtract => {
+                    instructions.append(.binary(.Subtract, inner_expr_result, one, dst)) catch unreachable;
+                    instructions.append(.copy(dst, inner_expr_result)) catch unreachable;
+                },
+            }
+            return inner_expr_result;
+        },
         .FnCall => |fn_call| {
             var args = ArrayList(Tac.Val).init(s.arena);
 

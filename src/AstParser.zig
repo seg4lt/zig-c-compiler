@@ -397,24 +397,8 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
         // Works but code format/print doesn't look exactly same
         .MinusMinus, .PlusPlus => {
             const op_token = try p.consumeAny();
-            var var_expr = try p.parseFactor();
-            var_expr = recurseGetGroupInnerExpr(var_expr);
-
-            if (var_expr.* != .Var) {
-                try p.parseErrorOnToken(
-                    ParseError.InvalidPrefixOperand,
-                    op_token,
-                    "invalid operand found for prefix operator `{s}`",
-                    .{@tagName(var_expr.*)},
-                );
-            }
-            const inner = var_expr.Var;
-            const new_var: *Ast.Expr = .varExpr(p.arena, inner.ident, inner.loc.line, inner.loc.start);
-            // clone because sema will modify this value to be unique - using same entity will double resolve same ident
-            const new_var_clone: *Ast.Expr = .varExpr(p.arena, inner.ident, inner.loc.line, inner.loc.start);
-
-            const one: *Ast.Expr = .constantExpr(p.arena, 1, op_token.line, op_token.start);
-            const prefix_op: Ast.BinaryOperator = switch (op_token.type) {
+            const inner_expr = try p.parseFactor();
+            const prefix_op: Ast.PrefixOperator = switch (op_token.type) {
                 .MinusMinus => .Subtract,
                 .PlusPlus => .Add,
                 else => std.debug.panic(
@@ -422,8 +406,7 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
                     .{ op_token.lexeme, @tagName(op_token.type) },
                 ),
             };
-            const binary: *Ast.Expr = .binaryExpr(p.arena, prefix_op, new_var, one, op_token.line, op_token.start);
-            return .assignmentExpr(p.arena, binary, new_var_clone, op_token.line, op_token.start);
+            return .prefixExpr(p.arena, prefix_op, inner_expr, op_token.line, op_token.start);
         },
         .LParen => {
             const group_token = try p.consume(.LParen);
@@ -1132,6 +1115,7 @@ pub const Ast = struct {
         Binary: struct { operator: BinaryOperator, left: *Expr, right: *Expr, loc: SourceLocation },
         Assignment: struct { src: *Expr, dst: *Expr, loc: SourceLocation },
         Group: struct { expr: *Expr, loc: SourceLocation },
+        Prefix: struct { operator: PrefixOperator, expr: *Expr, loc: SourceLocation },
         Postfix: struct { operator: PostfixOperator, expr: *Expr, loc: SourceLocation },
         Ternary: struct { condition: *Expr, then: *Expr, @"else": *Expr, loc: SourceLocation },
         FnCall: struct { ident: []const u8, args: ArrayList(*Expr), loc: SourceLocation },
@@ -1171,6 +1155,18 @@ pub const Ast = struct {
                 },
             };
             return postfix_expr;
+        }
+
+        pub fn prefixExpr(allocator: Allocator, operator: PrefixOperator, expr: *Expr, line: usize, start: usize) *Expr {
+            const prefix_expr = allocator.create(Expr) catch unreachable;
+            prefix_expr.* = .{
+                .Prefix = .{
+                    .operator = operator,
+                    .expr = expr,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return prefix_expr;
         }
 
         pub fn groupExpr(allocator: Allocator, expr: *Expr, line: usize, start: usize) *Expr {
@@ -1243,6 +1239,7 @@ pub const Ast = struct {
             return expr;
         }
     };
+    pub const PrefixOperator = enum { Add, Subtract };
     pub const PostfixOperator = enum { Add, Subtract };
     const UnaryOperator = enum {
         Negate,
@@ -1528,6 +1525,15 @@ pub const AstPrinter = struct {
     }
     fn printExpr(writer: AnyWriter, expr: *const Ast.Expr) void {
         switch (expr.*) {
+            .Prefix => |prefix_expr| {
+                writeFmt(writer, "{s}", .{
+                    switch (prefix_expr.operator) {
+                        .Add => "++",
+                        .Subtract => "--",
+                    },
+                });
+                printExpr(writer, prefix_expr.expr);
+            },
             .FnCall => |fn_call_expr| {
                 writeFmt(writer, "{s}(", .{fn_call_expr.ident});
                 for (fn_call_expr.args.items, 0..) |arg, i| {

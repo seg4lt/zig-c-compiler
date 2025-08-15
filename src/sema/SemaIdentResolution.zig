@@ -211,6 +211,19 @@ fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
 
 fn resolveExpr(s: Self, expr: *Ast.Expr, scope: *ScopeIdents) SemaError!void {
     switch (expr.*) {
+        .Prefix => |prefix_expr| {
+            const inner_expr = recurseGetGroupInnerExpr(prefix_expr.expr);
+            if (inner_expr.* != .Var) {
+                try s.semaError(
+                    SemaError.InvalidLValue,
+                    prefix_expr.loc.line,
+                    prefix_expr.loc.start,
+                    "invalid lvalue for prefix: `{s}`\n",
+                    .{@tagName(inner_expr.*)},
+                );
+            }
+            try s.resolveExpr(inner_expr, scope);
+        },
         .FnCall => |*fn_call| {
             const ident = scope.get(fn_call.ident) orelse {
                 try s.semaError(

@@ -164,6 +164,7 @@ fn checkStmt(s: Self, stmt: *Ast.Stmt) SemaError!void {
 
 fn checkExpr(s: Self, expr: *Ast.Expr) SemaError!void {
     switch (expr.*) {
+        .Prefix => |prefix_expr| try s.checkExpr(prefix_expr.expr),
         .Var => |var_expr| {
             if (s.symbol_table.get(var_expr.ident)) |saved_ident| {
                 if (saved_ident == .Fn) {
