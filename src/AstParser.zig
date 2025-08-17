@@ -1291,14 +1291,14 @@ pub const AstPrinter = struct {
         write(writer, "-- AST --\n");
         write(writer, "program\n");
         for (pg.fns.items) |fn_decl| {
-            printFnDecl(writer, fn_decl, 1);
+            printFnDecl(writer, fn_decl, 1, true);
             write(writer, "\n");
         }
         write(writer, "\n");
     }
 
-    fn printFnDecl(writer: AnyWriter, fn_decl: *const Ast.FnDecl, depth: usize) void {
-        if (fn_decl.body != null) printSpace(writer, depth);
+    fn printFnDecl(writer: AnyWriter, fn_decl: *const Ast.FnDecl, depth: usize, indent: bool) void {
+        if (indent) printSpace(writer, depth);
         writeFmt(writer, "int {s}( ", .{fn_decl.name});
         for (fn_decl.params.items, 0..) |param, i| {
             if (fn_decl.body != null) write(writer, "int ");
@@ -1337,7 +1337,7 @@ pub const AstPrinter = struct {
 
     fn printDecl(writer: AnyWriter, decl: *const Ast.Decl, depth: usize, new_line: bool) void {
         switch (decl.*) {
-            .Fn => |fn_decl| printFnDecl(writer, fn_decl, depth),
+            .Fn => |fn_decl| printFnDecl(writer, fn_decl, depth, false),
             .Var => |var_decl| printVarDecl(writer, var_decl, depth, new_line),
         }
     }
