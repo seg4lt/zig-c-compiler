@@ -13,7 +13,11 @@ const Options = struct {
 pub fn genTacky(opt: Options) Tac.Program {
     var self = Self{ .arena = opt.arena };
     const pg = self.genPg(opt.pg);
-    if (opt.print) TackyIRPrinter.print(std.io.getStdErr().writer().any(), pg);
+    if (opt.print) {
+        var printer = Printer.init(opt.arena);
+        TackyIRPrinter.print(printer.writer(), pg);
+        printer.printToStdErr(.{}) catch unreachable;
+    }
     return pg;
 }
 
@@ -583,9 +587,9 @@ pub const Tac = struct {
 };
 
 const TackyIRPrinter = struct {
-    writer: AnyWriter,
+    writer: *std.Io.Writer,
 
-    pub fn print(writer: AnyWriter, pg: Tac.Program) void {
+    pub fn print(writer: *std.Io.Writer, pg: Tac.Program) void {
         const s = @This(){ .writer = writer };
         s.printPg(pg);
     }
@@ -734,3 +738,4 @@ const Ast = @import("AstParser.zig").Ast;
 const ArrayList = @import("from_scratch.zig").ArrayList;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
+const Printer = @import("util.zig").Printer;

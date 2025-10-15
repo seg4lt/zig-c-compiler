@@ -1,4 +1,4 @@
-// const ArenaAllocator2 = std.heap.ArenaAllocator;
+// const ArenaAllocator = std.heap.ArenaAllocator;
 const ArenaAllocator = @import("from_scratch.zig").Arena;
 
 // Note: Probably need to decompose this entity - lots of things are stored here, but maybe this is fine
@@ -17,7 +17,7 @@ symbol_table: SymbolTable,
 error_reporter: *ErrorReporter,
 error_reporter_arena_state: *ArenaAllocator,
 
-random: std.Random,
+random_state: std.Random.DefaultPrng,
 
 const Self = @This();
 
@@ -54,9 +54,6 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
     const error_reporter = error_arena.create(ErrorReporter) catch unreachable;
     error_reporter.* = ErrorReporter.init(error_arena, src, src_path);
 
-    var prng = std.Random.DefaultPrng.init(0);
-    const rand = prng.random();
-
     return .{
         .gpa = gpa,
 
@@ -74,7 +71,7 @@ pub fn init(gpa: Allocator, src: []const u8, src_path: []const u8) Self {
         .error_reporter = error_reporter,
         .error_reporter_arena_state = error_reporter_arena_state,
 
-        .random = rand,
+        .random_state = std.Random.DefaultPrng.init(0),
     };
 }
 
@@ -177,6 +174,10 @@ pub fn deinitCodeEmissionArena(self: *Self) void {
         self.gpa.destroy(arena);
         self.code_emission_arena_state = null;
     }
+}
+
+pub fn random(self: *Self) std.Random {
+    return self.random_state.random();
 }
 
 const std = @import("std");

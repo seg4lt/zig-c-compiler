@@ -16,7 +16,9 @@ pub fn check(opt: SemaOptions) SemaError!void {
     };
 
     self.checkPg(opt.program) catch |e| {
-        self.error_reporter.printError(std.io.getStdErr().writer().any());
+        var printer = Printer.init(self.scratch_arena);
+        self.error_reporter.printError(printer.writer());
+        printer.printToStdErr(.{}) catch return SemaError.PrintFailed;
         return e;
     };
 }
@@ -240,3 +242,4 @@ const SemaError = sema_common.SemaError;
 const SymbolTable = @import("../SymbolTable.zig");
 const Symbol = SymbolTable.Symbol;
 const Ast = @import("../AstParser.zig").Ast;
+const Printer = @import("../util.zig").Printer;

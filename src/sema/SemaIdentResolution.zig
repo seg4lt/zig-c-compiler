@@ -14,7 +14,9 @@ pub fn resolve(opt: SemaOptions) SemaError!void {
     };
 
     self.resolvePg(opt.program) catch |e| {
-        self.error_reporter.printError(std.io.getStdErr().writer().any());
+        var printer = Printer.init(opt.scratch_arena);
+        self.error_reporter.printError(printer.writer());
+        printer.printToStdErr(.{}) catch return SemaError.PrintFailed;
         return e;
     };
 }
@@ -329,8 +331,10 @@ const IdentType = enum { Fn, Var };
 fn createNewScope(scope: *ScopeIdents) ScopeIdents {
     const new_scope = scope.clone() catch unreachable;
     var it = new_scope.iterator();
+    var count: u32 = 0;
     while (it.next()) |entry| {
         entry.value_ptr.*.from_current_scope = false;
+        count += 1;
     }
     return new_scope;
 }
@@ -345,3 +349,4 @@ const SemaError = @import("sema_common.zig").SemaError;
 const SemaOptions = @import("sema_common.zig").SemaOptions;
 const makeVar = @import("sema_common.zig").makeVar;
 const Ast = @import("../AstParser.zig").Ast;
+const Printer = @import("../util.zig").Printer;

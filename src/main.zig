@@ -32,7 +32,7 @@ fn runCompiler(gpa: Allocator) !void {
         .error_reporter = compiler_ctx.error_reporter,
         .print_ast = true,
     }) else null;
-
+    
     if (args.flag.sema) {
         try Sema.sema(.{
             .program = program_ast orelse return error.OwwwMyyyGauudddAstIsNull,
@@ -40,7 +40,7 @@ fn runCompiler(gpa: Allocator) !void {
             .scratch_arena = compiler_ctx.scratchArena(),
             .symbol_table = &compiler_ctx.symbol_table,
             .error_reporter = compiler_ctx.error_reporter,
-            .random = compiler_ctx.random,
+            .random = compiler_ctx.random(),
             .print_ast = true,
         });
     }
@@ -56,7 +56,7 @@ fn runCompiler(gpa: Allocator) !void {
     compiler_ctx.resetScratchArena();
     compiler_ctx.deinitParserArena();
     compiler_ctx.deinitSemaArena();
-
+    
     const codegen_pg = if (args.flag.codegen) Codegen.emit(.{
         .arena = compiler_ctx.codegenArena(),
         .scratch_arena = compiler_ctx.scratchArena(),
@@ -66,7 +66,7 @@ fn runCompiler(gpa: Allocator) !void {
     }) else null;
     compiler_ctx.resetScratchArena();
     compiler_ctx.deinitTackyArena();
-
+    
     if (args.flag.assemble) {
         try CodeEmission.emit(.{
             .arena = compiler_ctx.codeEmissionArena(),

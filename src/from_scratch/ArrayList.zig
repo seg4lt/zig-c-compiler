@@ -6,7 +6,12 @@ pub fn ArrayList(comptime T: type) type {
 
         const Self = @This();
 
-        pub const Writer = std.io.Writer(*Self, Allocator.Error, appendWrite);
+        pub const WriterContext = struct {
+            self: *Self,
+            allocator: Allocator,
+        };
+
+        pub const Writer = std.io.GenericWriter(WriterContext, Allocator.Error, appendWriteCtx);
 
         pub fn init(allocator: Allocator) Self {
             const INITIAL_CAPACITY = 8;
@@ -40,10 +45,16 @@ pub fn ArrayList(comptime T: type) type {
         }
 
         pub fn writer(self: *Self) Writer {
-            return .{ .context = self };
+            return .{ .context = .{
+                .self = self,
+                .allocator = self.allocator,
+            } };
         }
 
-        // Really wanted to ignore memory errors, but Writer inteface requires method that returns this error. Ahhhhhh......
+        fn appendWriteCtx(ctx: WriterContext, m: []const T) error{OutOfMemory}!usize {
+            return ctx.self.appendWrite(m);
+        }
+
         fn appendWrite(self: *Self, m: []const T) error{OutOfMemory}!usize {
             self.appendSlice(m);
             return m.len;

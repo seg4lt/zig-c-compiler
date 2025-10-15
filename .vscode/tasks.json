@@ -11,5 +11,35 @@
                 "isDefault": true
             }
         },
+        {
+            "label": "zig build",
+            "type": "shell",
+            "command": "zig",
+            "args": ["build"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "build_test",
+            "type": "shell",
+            "command": "zig",
+            "args": [
+                "test",
+                "${input:testFile}",
+                "--test-no-exec",
+                "-femit-bin=${workspaceFolder}/zig-out/bin/test-binary"
+            ],
+            "group": "test"
+        }
+    ],
+    "inputs": [
+        {
+            "type": "promptString",
+            "id": "testFile",
+            "description": "Test file path",
+            "default": "src/main.zig"
+        }
     ]
 }

@@ -34,15 +34,21 @@ pub fn parseTokens(opt: LexerOptions) LexerError![]const Token {
     l.scan();
 
     if (l.error_reporter.error_items.items.len > 0) {
-        l.error_reporter.printError(std.io.getStdErr().writer().any());
+        var printer: Printer = .init(l.scratch_arena);
+        l.error_reporter.printError(printer.writer());
+        printer.printToStdErr(.{}) catch return LexerError.PrintFailed;
         return LexerError.LexerFailed;
     }
 
     if (l.print_tokens) {
-        printTokens(l.tokens, std.io.getStdErr().writer().any());
+        var printer: Printer = .init(l.scratch_arena);
+        printTokens(l.tokens, printer.writer());
+        printer.printToStdErr(.{}) catch return LexerError.PrintFailed;
     }
     return l.tokens.items;
 }
+
+
 
 fn appendError(s: *Self, comptime fmt: []const u8, args: anytype) void {
     s.error_reporter.addError(s.line, s.start, fmt, args);
@@ -56,7 +62,7 @@ fn appendError(s: *Self, comptime fmt: []const u8, args: anytype) void {
     s.current += 1;
 }
 
-pub fn printTokens(tokens: ArrayList(Token), writer: std.io.AnyWriter) void {
+pub fn printTokens(tokens: ArrayList(Token), writer: *std.Io.Writer) void {
     writer.print("-- Lexer Print --\n", .{}) catch unreachable;
     writer.print("{s:>20}{s:>10}{s:>10}{s:>10}{s}\n", .{ "TokenType", "", "Lexeme", "", "Location" }) catch unreachable;
     for (tokens.items) |item| {
@@ -355,7 +361,7 @@ fn isAtEnd(s: *const Self, offset: usize) bool {
     return s.current + offset >= s.src.len;
 }
 
-const LexerError = error{LexerFailed};
+const LexerError = error{ LexerFailed, PrintFailed };
 
 pub const Token = struct {
     type: TokenType,
@@ -444,6 +450,7 @@ const Allocator = std.mem.Allocator;
 const ErrorReporter = @import("ErrorReporter.zig");
 // const ArrayList = std.ArrayList;
 const ArrayList = @import("from_scratch/ArrayList.zig").ArrayList;
+const Printer = @import("util.zig").Printer;
 
 test {
     const tests = @import("tests/lexer_test.zig");

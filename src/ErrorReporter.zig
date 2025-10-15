@@ -21,7 +21,7 @@ pub fn init(arena: Allocator, src: []const u8, src_path: []const u8) Self {
     };
 }
 
-pub fn printError(s: *const Self, writer: AnyWriter) void {
+pub fn printError(s: *const Self, writer: *std.Io.Writer) void {
     if (s.error_items.items.len == 0) return;
     for (s.error_items.items) |it| writer.print("{s}", .{it.msg}) catch unreachable;
     _ = writer.write("\n") catch unreachable;

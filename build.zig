@@ -27,15 +27,9 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    setupTest(b, target, optimize);
-}
-
-fn setupTest(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const test_step = b.step("test", "Run all tests");
     const t = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = exe.root_module,
     });
     const t_run = b.addRunArtifact(t);
     test_step.dependOn(&t_run.step);

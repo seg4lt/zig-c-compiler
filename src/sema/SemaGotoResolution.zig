@@ -21,7 +21,9 @@ pub fn resolve(opt: SemaOptions) SemaError!void {
     };
 
     self.resolvePg(opt.program) catch |e| {
-        self.error_reporter.printError(std.io.getStdErr().writer().any());
+        var printer = Printer.init(self.scratch_arena);
+        self.error_reporter.printError(printer.writer());
+        printer.printToStdErr(.{}) catch return SemaError.PrintFailed;
         return e;
     };
 }
@@ -257,3 +259,4 @@ const makeGotoLabel = sema_common.makeGotoLabel;
 const ErrorReporter = @import("../ErrorReporter.zig");
 const AstParser = @import("../AstParser.zig");
 const Ast = AstParser.Ast;
+const Printer = @import("../util.zig").Printer;

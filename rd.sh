@@ -2,8 +2,10 @@
 
 
 if [ -n "$TC" ]; then
+  # --latest-only
+  # --keep-asm-on-failure 
   echo "Running tests..."
-  docker-compose exec app bash -c "zig build && tests/test_compiler ./zig-out/bin/zcc --verbose --failfast $1"
+  docker-compose exec app bash -c "zig build && tests/test_compiler ./zig-out/bin/zcc --verbose --failfast --verbose $1"
   exit 0
 fi
 

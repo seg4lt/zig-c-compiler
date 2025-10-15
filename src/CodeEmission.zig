@@ -25,9 +25,11 @@ pub fn emit(opt: Options) !void {
     s.emitProgram(opt.pg);
 
     if (opt.print) {
-        const stdErr = std.io.getStdErr();
-        _ = stdErr.write("-- ASM --\n") catch unreachable;
-        _ = stdErr.write(buffer.items) catch unreachable;
+        var printer = Printer.init(opt.scratch_arena);
+        const writer = printer.writer();
+        _ = writer.write("-- ASM --\n") catch unreachable;
+        _ = writer.write(buffer.items) catch unreachable;
+        printer.printToStdErr(.{}) catch unreachable;
     }
 
     const asm_file = std.fmt.allocPrint(opt.scratch_arena, "{s}.s", .{opt.src_path_no_ext}) catch unreachable;
@@ -53,8 +55,8 @@ fn emitFnDecl(s: Self, fn_decl: Asm.FnDefn) void {
     }
 
     // prologue
-    s.writeFmt("\tpushq\t{any}\n", .{Asm.Register.register(.bp, .qword)});
-    s.writeFmt("\tmovq\t{any}, {any}\n", .{ Asm.Register.register(.sp, .qword), Asm.Register.register(.bp, .qword) });
+    s.writeFmt("\tpushq\t{f}\n", .{Asm.Register.register(.bp, .qword)});
+    s.writeFmt("\tmovq\t{f}, {f}\n", .{ Asm.Register.register(.sp, .qword), Asm.Register.register(.bp, .qword) });
 
     for (fn_decl.instructions.items) |item| s.emitInstructions(item);
 }
@@ -80,7 +82,7 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
             }
         },
         .DeallocateStack => |size| {
-            s.writeFmt("\taddq\t${d}, {any}\n", .{ size, Asm.Register.register(.sp, .qword) });
+            s.writeFmt("\taddq\t${d}, {f}\n", .{ size, Asm.Register.register(.sp, .qword) });
         },
         .Push => |push| {
             s.writeFmt("\tpushq\t{s}\n", .{s.fmtOperand(push)});
@@ -157,7 +159,7 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
         },
         .AllocateStack => |stack_size| {
             if (stack_size != 0) {
-                s.writeFmt("\tsubq\t${d}, {any}\n", .{
+                s.writeFmt("\tsubq\t${d}, {f}\n", .{
                     stack_size,
                     Asm.Register.register(.sp, .qword),
                 });
@@ -170,13 +172,13 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
             // epilogue
             s.write("\t# vv\tEpilogue\n");
             s.writeFmt(
-                "\tmovq\t{any}, {any}\n",
+                "\tmovq\t{f}, {f}\n",
                 .{
                     Asm.Register.register(.bp, .qword),
                     Asm.Register.register(.sp, .qword),
                 },
             );
-            s.writeFmt("\tpopq\t{any}\n", .{Asm.Register.register(.bp, .qword)});
+            s.writeFmt("\tpopq\t{f}\n", .{Asm.Register.register(.bp, .qword)});
             s.write("\tret\n");
         },
     }
@@ -193,7 +195,7 @@ fn fmtOperand(s: Self, op: Asm.Operand) []const u8 {
     return switch (op) {
         .Imm => |imm| std.fmt.allocPrint(s.arena, "${d}", .{imm}) catch unreachable,
         .Register => |r| std.fmt.allocPrint(s.arena, "{f}", .{r}) catch unreachable,
-        .Stack => |stack_size| std.fmt.allocPrint(s.arena, "{d}({any})", .{
+        .Stack => |stack_size| std.fmt.allocPrint(s.arena, "{d}({f})", .{
             stack_size,
             Asm.Register.register(.bp, .qword),
         }) catch unreachable,
@@ -216,3 +218,4 @@ const ArrayList = @import("from_scratch.zig").ArrayList;
 const AnyWriter = std.io.AnyWriter;
 const Allocator = std.mem.Allocator;
 const SymbolTable = @import("SymbolTable.zig");
+const Printer = @import("util.zig").Printer;

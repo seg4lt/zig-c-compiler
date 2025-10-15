@@ -44,7 +44,9 @@ pub fn label(opt: SemaOptions) SemaError!void {
     };
 
     self.labelPg(opt.program) catch |e| {
-        self.error_reporter.printError(std.io.getStdErr().writer().any());
+        var printer = Printer.init(self.scratch_arena);
+        self.error_reporter.printError(printer.writer());
+        printer.printToStdErr(.{}) catch return SemaError.PrintFailed;
         return e;
     };
 }
@@ -312,3 +314,4 @@ const SemaOptions = sema_common.SemaOptions;
 const makeLabel = sema_common.makeLabel;
 const makeVar = sema_common.makeVar;
 const ErrorReporter = @import("../ErrorReporter.zig");
+const Printer = @import("../util.zig").Printer;

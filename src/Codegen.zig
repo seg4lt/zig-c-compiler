@@ -12,16 +12,26 @@ const COUNT_REGISTER_ARGS = 6;
 const ARGS_REGISTER = [_]Asm.Register.Type{ .di, .si, .dx, .cx, .r8, .r9 };
 
 pub fn emit(opt: Options) Asm.Program {
-    const stdErrorWriter = std.io.getStdErr().writer().any();
-
     var pg = Stage1.init(opt.arena, opt.symbol_table).emitPg(opt.pg);
-    if (opt.print_codegen) Printer.print(stdErrorWriter, pg, "Stage 1");
+    if (opt.print_codegen) {
+        var printer = AllocatingPrinter.init(opt.scratch_arena);
+        Printer.print(printer.writer(), pg, "Stage 1");
+        printer.printToStdErr(.{}) catch unreachable;
+    }
 
     Stage2.init(opt.arena).processPg(&pg);
-    if (opt.print_codegen) Printer.print(stdErrorWriter, pg, "Stage 2");
+    if (opt.print_codegen) {
+        var printer = AllocatingPrinter.init(opt.scratch_arena);
+        Printer.print(printer.writer(), pg, "Stage 2");
+        printer.printToStdErr(.{}) catch unreachable;
+    }
 
     const final_pg = Stage3.init(opt.arena).fixPg(pg);
-    if (opt.print_codegen) Printer.print(stdErrorWriter, final_pg, "Stage 3");
+    if (opt.print_codegen) {
+        var printer = AllocatingPrinter.init(opt.scratch_arena);
+        Printer.print(printer.writer(), final_pg, "Stage 3");
+        printer.printToStdErr(.{}) catch unreachable;
+    }
 
     return final_pg;
 }
@@ -585,9 +595,7 @@ pub const Asm = struct {
             qword = 8,
         };
 
-        pub fn format(self: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = options;
-            _ = fmt;
+        pub fn format(self: @This(), writer: anytype) !void {
             const value = switch (self.type) {
                 .ax => switch (self.size) {
                     .byte => "%al",
@@ -662,9 +670,9 @@ pub const Asm = struct {
 };
 
 const Printer = struct {
-    writer: AnyWriter,
+    writer: *std.Io.Writer,
 
-    pub fn print(writer: AnyWriter, pg: Asm.Program, title: []const u8) void {
+    pub fn print(writer: *std.Io.Writer, pg: Asm.Program, title: []const u8) void {
         const s = Printer{ .writer = writer };
         s.writeFmt("-- Codegen: {s} --\n", .{title});
         for (pg.fns.items) |fn_defn| {
@@ -776,7 +784,7 @@ const Printer = struct {
     }
 
     fn printRegister(s: @This(), reg: Asm.Register) void {
-        s.writeFmt("Register({any})", .{reg});
+        s.writeFmt("Register({f})", .{reg});
     }
 
     fn printSpace(s: @This(), depth: usize) void {
@@ -799,3 +807,4 @@ const AnyWriter = std.io.AnyWriter;
 const ArrayList = @import("from_scratch.zig").ArrayList;
 const HashMap = std.StringHashMap;
 const SymbolTable = @import("SymbolTable.zig");
+const AllocatingPrinter = @import("util.zig").Printer;

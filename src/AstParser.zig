@@ -24,7 +24,9 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
     };
 
     const pg = self.parseProgram() catch |e| {
-        self.error_reporter.printError(std.io.getStdErr().writer().any());
+        var collector = Printer.init(opt.scratch_arena);
+        self.error_reporter.printError(collector.writer());
+        collector.printToStdErr(.{}) catch return ParseError.PrintFailed;
         return e;
     };
 
@@ -35,7 +37,9 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
             "Unexpected token `{s}` << {s} >> at end of input",
             .{ last_token.lexeme, @tagName(last_token.type) },
         ) catch |e| {
-            self.error_reporter.printError(std.io.getStdErr().writer().any());
+            var printer = Printer.init(self.scratch_arena);
+            self.error_reporter.printError(printer.writer());
+            printer.printToStdErr(.{}) catch return ParseError.PrintFailed;
             return e;
         };
     }
@@ -46,13 +50,9 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
 }
 
 fn print(arena: Allocator, program: *const Ast.Program) void {
-    var buffer = ArrayList(u8).init(arena);
-    var stdErr = std.io.getStdErr().writer();
-    AstPrinter.print(buffer.writer().any(), program);
-    // all of this to check if I have extra space.. Ouch...
-    for (buffer.items) |c| {
-        _ = (if (c == ' ') stdErr.write("﹍") else stdErr.write(&[_]u8{c})) catch unreachable;
-    }
+    var collector = Printer.init(arena);
+    AstPrinter.print(collector.writer(), program);
+    collector.printToStdErr(.{ .show_whitespace = true }) catch unreachable;
 }
 
 fn parseProgram(p: *Self) ParseError!*Ast.Program {
@@ -1287,7 +1287,7 @@ const ParseError = error{
 } || CompilerError;
 
 pub const AstPrinter = struct {
-    pub fn print(writer: AnyWriter, pg: *const Ast.Program) void {
+    pub fn print(writer: *std.Io.Writer, pg: *const Ast.Program) void {
         write(writer, "-- AST --\n");
         write(writer, "program\n");
         for (pg.fns.items) |fn_decl| {
@@ -1297,7 +1297,7 @@ pub const AstPrinter = struct {
         write(writer, "\n");
     }
 
-    fn printFnDecl(writer: AnyWriter, fn_decl: *const Ast.FnDecl, depth: usize, indent: bool) void {
+    fn printFnDecl(writer: *std.Io.Writer, fn_decl: *const Ast.FnDecl, depth: usize, indent: bool) void {
         if (indent) printSpace(writer, depth);
         writeFmt(writer, "int {s}( ", .{fn_decl.name});
         for (fn_decl.params.items, 0..) |param, i| {
@@ -1321,28 +1321,28 @@ pub const AstPrinter = struct {
         }
     }
 
-    fn printBlock(writer: AnyWriter, block: *const Ast.Block, depth: usize, new_line: bool) void {
+    fn printBlock(writer: *std.Io.Writer, block: *const Ast.Block, depth: usize, new_line: bool) void {
         for (block.block_item.items) |item| {
             printSpace(writer, depth);
             printBlockItem(writer, item, depth, new_line);
         }
     }
 
-    fn printBlockItem(writer: AnyWriter, block_item: *const Ast.BlockItem, depth: usize, new_line: bool) void {
+    fn printBlockItem(writer: *std.Io.Writer, block_item: *const Ast.BlockItem, depth: usize, new_line: bool) void {
         switch (block_item.*) {
             .Stmt => |stmt| printStmt(writer, stmt, depth),
             .Decl => |decl| printDecl(writer, decl, depth, new_line),
         }
     }
 
-    fn printDecl(writer: AnyWriter, decl: *const Ast.Decl, depth: usize, new_line: bool) void {
+    fn printDecl(writer: *std.Io.Writer, decl: *const Ast.Decl, depth: usize, new_line: bool) void {
         switch (decl.*) {
             .Fn => |fn_decl| printFnDecl(writer, fn_decl, depth, false),
             .Var => |var_decl| printVarDecl(writer, var_decl, depth, new_line),
         }
     }
 
-    fn printVarDecl(writer: AnyWriter, var_decl: *const Ast.VarDecl, depth: usize, new_line: bool) void {
+    fn printVarDecl(writer: *std.Io.Writer, var_decl: *const Ast.VarDecl, depth: usize, new_line: bool) void {
         _ = depth;
         write(writer, "int ");
         writeFmt(writer, "{s}", .{var_decl.ident});
@@ -1353,7 +1353,7 @@ pub const AstPrinter = struct {
         if (new_line) write(writer, ";\n");
     }
 
-    fn printIfStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printIfStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
         const if_stmt = switch (stmt.*) {
             .If => |if_stmt| if_stmt,
             else => std.debug.panic(
@@ -1387,7 +1387,7 @@ pub const AstPrinter = struct {
         write(writer, "\n");
     }
 
-    fn printDoWhileStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printDoWhileStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
         const do_stmt = switch (stmt.*) {
             .DoWhile => |do_while| do_while,
             else => std.debug.panic(
@@ -1404,7 +1404,7 @@ pub const AstPrinter = struct {
         write(writer, " );\n");
     }
 
-    fn printWhileStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printWhileStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
         const while_stmt = switch (stmt.*) {
             .While => |while_stmt_| while_stmt_,
             else => std.debug.panic(
@@ -1423,7 +1423,7 @@ pub const AstPrinter = struct {
         write(writer, "\n");
     }
 
-    fn printForStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printForStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
         const for_stmt = switch (stmt.*) {
             .For => |for_stmt_| for_stmt_,
             else => std.debug.panic(
@@ -1455,7 +1455,7 @@ pub const AstPrinter = struct {
         write(writer, "\n");
     }
 
-    fn printStmt(writer: AnyWriter, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
         switch (stmt.*) {
             .Switch => |switch_stmt| {
                 write(writer, "switch (");
@@ -1523,7 +1523,7 @@ pub const AstPrinter = struct {
             .Null => write(writer, ";\n"),
         }
     }
-    fn printExpr(writer: AnyWriter, expr: *const Ast.Expr) void {
+    fn printExpr(writer: *std.Io.Writer, expr: *const Ast.Expr) void {
         switch (expr.*) {
             .Prefix => |prefix_expr| {
                 writeFmt(writer, "{s}", .{
@@ -1617,15 +1617,15 @@ pub const AstPrinter = struct {
         }
     }
 
-    fn printSpace(writer: AnyWriter, depth: usize) void {
+    fn printSpace(writer: *std.Io.Writer, depth: usize) void {
         for (0..depth) |_| write(writer, "  ");
     }
 
-    fn write(w: AnyWriter, bytes: []const u8) void {
+    fn write(w: *std.Io.Writer, bytes: []const u8) void {
         _ = w.write(bytes) catch unreachable;
     }
 
-    fn writeFmt(w: AnyWriter, comptime fmt: []const u8, args: anytype) void {
+    fn writeFmt(w: *std.Io.Writer, comptime fmt: []const u8, args: anytype) void {
         _ = w.print(fmt, args) catch unreachable;
     }
 };
@@ -1635,13 +1635,15 @@ pub fn recurseGetGroupInnerExpr(expr: *Ast.Expr) *Ast.Expr {
     return recurseGetGroupInnerExpr(expr.Group.expr);
 }
 
-const std = @import("std");
-const ErrorReporter = @import("ErrorReporter.zig");
-const Lexer = @import("Lexer.zig");
-const Allocator = std.mem.Allocator;
 // const ArrayList = std.ArrayList;
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const CompilerError = @import("util.zig").CompilerError;
+const ErrorReporter = @import("ErrorReporter.zig");
 const ArrayList = @import("from_scratch/ArrayList.zig").ArrayList;
+const Lexer = @import("Lexer.zig");
 const TokenType = Lexer.TokenType;
 const Token = Lexer.Token;
-const AnyWriter = std.io.AnyWriter;
-const CompilerError = @import("util.zig").CompilerError;
+const Printer = @import("util.zig").Printer;
