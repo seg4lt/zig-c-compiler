@@ -370,9 +370,15 @@ const Stage3 = struct {
                 .Binary => |binary| {
                     switch (binary.operator) {
                         .LeftShift, .RightShift => {
-                            const reg: Asm.Operand = .register(.cx, .dword);
-                            instructions.append(.mov(binary.operand, reg));
-                            instructions.append(.binary(binary.operator, reg, binary.dst));
+                            const count_reg: Asm.Operand = .register(.cx, .dword);
+                            instructions.append(.mov(binary.operand, count_reg));
+
+                            const dst_reg: Asm.Operand = .register(.r10, .dword);
+                            instructions.append(.mov(binary.dst, dst_reg));
+
+                            const result_reg: Asm.Operand = .register(.cx, .byte);
+                            instructions.append(.binary(binary.operator, result_reg, dst_reg));
+                            instructions.append(.mov(dst_reg, binary.dst));
                         },
                         .BitAnd, .BitOr, .BitXor, .Add, .Subtract => {
                             const reg: Asm.Operand = .register(.r10, .dword);

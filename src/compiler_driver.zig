@@ -1,3 +1,6 @@
+/// This is the compiler I am using for preprocessing, assembling, and linking C code.
+const SUPPORTING_COMPILER = "gcc";
+
 pub fn preprocessor(allocator: Allocator, src_path: []const u8) ![]u8 {
     const src_path_no_ext = if (std.mem.endsWith(u8, src_path, ".c"))
         src_path[0 .. src_path.len - 2]
@@ -7,7 +10,7 @@ pub fn preprocessor(allocator: Allocator, src_path: []const u8) ![]u8 {
     const preprocessed_path = std.fmt.allocPrint(allocator, "{s}.i", .{src_path_no_ext}) catch unreachable;
     defer allocator.free(preprocessed_path);
 
-    var child = std.process.Child.init(&[_][]const u8{ "gcc", "-E", "-P", src_path, "-o", preprocessed_path }, allocator);
+    var child = std.process.Child.init(&[_][]const u8{ SUPPORTING_COMPILER, "-E", "-P", src_path, "-o", preprocessed_path }, allocator);
     const result = child.spawnAndWait() catch unreachable;
     std.debug.assert(result == .Exited);
 
@@ -22,7 +25,7 @@ pub const OutputType = enum {
 pub fn assembleAndLink(arena: Allocator, src_path_no_ext: []const u8, output_type: OutputType) void {
     const asm_file = std.fmt.allocPrint(arena, "{s}.s", .{src_path_no_ext}) catch unreachable;
     var cmd = ArrayList([]const u8).init(arena);
-    cmd.append("gcc");
+    cmd.append(SUPPORTING_COMPILER);
 
     switch (output_type) {
         .exe => {
