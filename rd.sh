@@ -1,20 +1,41 @@
 #!/bin/sh
 
+if [ -n "$DOCKER" ]; then
+    echo "Using Docker environment......."
+    if [ -n "$TC" ]; then
+        # --latest-only
+        # --keep-asm-on-failure
+        echo "Running tests..."
+        docker-compose exec app bash -c "zig build && tests/test_compiler ./zig-out/bin/zcc --verbose --failfast --verbose $1"
+        exit 0
+    fi
+
+    if [ -n "$RUN" ]; then
+        echo "Running ./c/main.c"
+        docker-compose exec app bash -c "zig build && ./zig-out/bin/zcc -- ./c/main.c && ./c/main"
+        status=$?
+        exit $status
+    fi
+
+    echo "Compiling ./c/main.c"
+    docker-compose exec app bash -c "zig build && ./zig-out/bin/zcc -- ./c/main.c $1"
+    exit 0
+fi
 
 if [ -n "$TC" ]; then
-  # --latest-only
-  # --keep-asm-on-failure 
-  echo "Running tests..."
-  docker-compose exec app bash -c "zig build && tests/test_compiler ./zig-out/bin/zcc --verbose --failfast --verbose $1"
-  exit 0
+    # --latest-only
+    # --keep-asm-on-failure
+    echo "Running tests..."
+    zig build && tests/test_compiler ./zig-out/bin/zcc --verbose --failfast --verbose $1
+    exit 0
 fi
 
 if [ -n "$RUN" ]; then
-  echo "Running ./c/main.c"
-  docker-compose exec app bash -c "zig build && ./zig-out/bin/zcc -- ./c/main.c && ./c/main"
-  status=$?
-  exit $status
+    echo "Running ./c/main.c"
+    zig build && ./zig-out/bin/zcc -- ./c/main.c && ./c/main
+    status=$?
+    exit $status
 fi
 
 echo "Compiling ./c/main.c"
-docker-compose exec app bash -c "zig build && ./zig-out/bin/zcc -- ./c/main.c $1"
+zig build && ./zig-out/bin/zcc -- ./c/main.c $1

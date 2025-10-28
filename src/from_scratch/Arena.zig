@@ -40,7 +40,7 @@ pub fn allocator(self: *@This()) Allocator {
 }
 
 pub fn reset(arena: *@This(), mode: std.heap.ArenaAllocator.ResetMode) bool {
-    // TODO(Aman): Add support for ResetMode so I don't have to free memory
+    // TODO(seg4lt): Add support for ResetMode so I don't have to free memory
     _ = mode;
     var block = arena.first_block;
     while (block) |b| {
