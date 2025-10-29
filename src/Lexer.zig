@@ -309,8 +309,9 @@ fn consumeAny(s: *Self) u8 {
     return c;
 }
 
+
 fn identOrKeyword(s: *Self) void {
-    while (!s.isAtEnd(0) and (std.ascii.isAlphabetic(s.peek()) or std.ascii.isDigit(s.peek()) or s.peek() == '_')) {
+    while (!s.isAtEnd(0) and (isAlphabetic(s.peek()) or isDigit(s.peek()) or s.peek() == '_')) {
         _ = s.consumeAny();
     }
     const lexeme = s.src[s.start..s.current];
@@ -329,21 +330,23 @@ fn addToken(s: *Self, token_type: TokenType) void {
 }
 
 fn getTokenType(lexeme: []const u8) TokenType {
-    if (std.mem.eql(u8, "int", lexeme)) return .Int;
-    if (std.mem.eql(u8, "void", lexeme)) return .Void;
-    if (std.mem.eql(u8, "return", lexeme)) return .Return;
-    if (std.mem.eql(u8, "if", lexeme)) return .If;
-    if (std.mem.eql(u8, "else", lexeme)) return .Else;
-    if (std.mem.eql(u8, "goto", lexeme)) return .Goto;
-
-    if (std.mem.eql(u8, "do", lexeme)) return .Do;
-    if (std.mem.eql(u8, "while", lexeme)) return .While;
-    if (std.mem.eql(u8, "for", lexeme)) return .For;
-    if (std.mem.eql(u8, "break", lexeme)) return .Break;
-    if (std.mem.eql(u8, "continue", lexeme)) return .Continue;
-    if (std.mem.eql(u8, "switch", lexeme)) return .Switch;
-    if (std.mem.eql(u8, "case", lexeme)) return .Case;
-    if (std.mem.eql(u8, "default", lexeme)) return .Default;
+    const eql = std.mem.eql;
+    if (eql(u8, "int", lexeme)) return .Int;
+    if (eql(u8, "void", lexeme)) return .Void;
+    if (eql(u8, "return", lexeme)) return .Return;
+    if (eql(u8, "if", lexeme)) return .If;
+    if (eql(u8, "else", lexeme)) return .Else;
+    if (eql(u8, "goto", lexeme)) return .Goto;
+    if (eql(u8, "do", lexeme)) return .Do;
+    if (eql(u8, "while", lexeme)) return .While;
+    if (eql(u8, "for", lexeme)) return .For;
+    if (eql(u8, "break", lexeme)) return .Break;
+    if (eql(u8, "continue", lexeme)) return .Continue;
+    if (eql(u8, "switch", lexeme)) return .Switch;
+    if (eql(u8, "case", lexeme)) return .Case;
+    if (eql(u8, "default", lexeme)) return .Default;
+    if (eql(u8, "extern", lexeme)) return .Extern;
+    if (eql(u8, "static", lexeme)) return .Static;
     return .Ident;
 }
 
@@ -439,6 +442,8 @@ pub const TokenType = enum {
     Switch,
     Case,
     Default,
+    Static,
+    Extern,
 
     // Special
     Eof,
@@ -451,6 +456,8 @@ const ErrorReporter = @import("ErrorReporter.zig");
 // const ArrayList = std.ArrayList;
 const ArrayList = @import("from_scratch/ArrayList.zig").ArrayList;
 const Printer = @import("util.zig").Printer;
+const isAlphabetic = std.ascii.isAlphabetic;
+const isDigit = std.ascii.isDigit;
 
 test {
     const tests = @import("tests/lexer_test.zig");

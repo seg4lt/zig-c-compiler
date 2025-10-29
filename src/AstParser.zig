@@ -56,12 +56,12 @@ fn print(arena: Allocator, program: *const Ast.Program) void {
 }
 
 fn parseProgram(p: *Self) ParseError!*Ast.Program {
-    var fns = ArrayList(*Ast.FnDecl).init(p.arena);
+    var decls = ArrayList(*Ast.Decl).init(p.arena);
     while (!p.isAtEnd()) {
-        const fn_decl: *Ast.FnDecl = try p.parseFnDecl(.{});
-        fns.append(fn_decl);
+        const decl = try p.parseDecl(.{});
+        decls.append(decl);
     }
-    return .init(p.arena, fns);
+    return .init(p.arena, decls);
 }
 
 const ParseFnDecl = struct {
@@ -69,14 +69,15 @@ const ParseFnDecl = struct {
 };
 
 fn parseFnDecl(p: *Self, opt: ParseFnDecl) ParseError!*Ast.FnDecl {
-    _ = try p.consume(.Int);
-    const ident = try p.consume(.Ident);
+    const return_type, const storage_class = try p.parseTypeAndStorageClass();
+    _ = return_type;
 
+    const ident = try p.consume(.Ident);
     const params = try p.parseFnParams();
 
     if (p.peek().type == .Semicolon) {
         _ = try p.consume(.Semicolon);
-        return .init(p.arena, ident.lexeme, params, null, ident.line, ident.start);
+        return Ast.FnDecl.init(p.arena, ident.lexeme, params, null, storage_class, ident.line, ident.start);
     }
     if (opt.only_decl) {
         try p.parseError(
@@ -86,7 +87,7 @@ fn parseFnDecl(p: *Self, opt: ParseFnDecl) ParseError!*Ast.FnDecl {
         );
     }
     const body = try p.parseBlock();
-    return .init(p.arena, ident.lexeme, params, body, ident.line, ident.start);
+    return .init(p.arena, ident.lexeme, params, body, storage_class, ident.line, ident.start);
 }
 
 fn parseBlock(p: *Self) ParseError!*Ast.Block {
@@ -101,35 +102,80 @@ fn parseBlock(p: *Self) ParseError!*Ast.Block {
     return .init(p.arena, body, start_token.line, start_token.start);
 }
 
-fn parseBlockItem(p: *Self) ParseError!*Ast.BlockItem {
-    const peek_token = p.peek();
-    return switch (peek_token.type) {
-        .Int => .decl(p.arena, try p.parseDecl()),
-        .Semicolon => {
-            _ = try p.consume(.Semicolon);
-            return .stmt(p.arena, .nullStmt(p.arena, peek_token.line, peek_token.start));
-        },
-        else => .stmt(p.arena, try p.parseStmt()),
+fn isMaybeDecl(p: Self, offset: i8) bool {
+    return switch (p.peekOffset(offset).type) {
+        .Int, .Static, .Extern => true,
+        else => false,
     };
 }
 
-fn parseDecl(p: *Self) ParseError!*Ast.Decl {
-    const token = p.peek();
-    // We only support `int` at the moment
-    if (token.type != .Int) {
-        try p.parseError(ParseError.UnexpectedToken, "expected int found `{s}` << {s} >> ", .{ token.lexeme, @tagName(token.type) });
+fn parseBlockItem(p: *Self) ParseError!*Ast.BlockItem {
+    if (p.isMaybeDecl(0)) {
+        const decl = try p.parseDecl(.{ .only_fn_decl = true });
+        return .decl(p.arena, decl);
     }
 
+    const peek_token = p.peek();
+    if (peek_token.type == .Semicolon) {
+        _ = try p.consume(.Semicolon);
+        return .stmt(p.arena, .nullStmt(p.arena, peek_token.line, peek_token.start));
+    }
+
+    return .stmt(p.arena, try p.parseStmt());
+}
+
+fn parseTypeAndStorageClass(p: *Self) ParseError!struct { []const u8, ?Ast.StorageClass } {
+    var types: ArrayList([]const u8) = .init(p.scratch_arena);
+    var storage_classes: ArrayList(Ast.StorageClass) = .init(p.scratch_arena);
+    while (true) {
+        const peeked_token = p.peek();
+        switch (peeked_token.type) {
+            .Int => {
+                _ = try p.consumeAny();
+                types.append(peeked_token.lexeme);
+            },
+            .Static => {
+                _ = try p.consumeAny();
+                storage_classes.append(.Static);
+            },
+            .Extern => {
+                _ = try p.consumeAny();
+                storage_classes.append(.Extern);
+            },
+            else => break, // Don't care about other tokens
+        }
+    }
+
+    if (types.items.len != 1) {
+        try p.parseError(ParseError.InvalidType, "decl must have only one type. Found `{any}`", .{types});
+    }
+    if (storage_classes.items.len > 1) {
+        try p.parseError(ParseError.InvalidStorageClass, "decl must have only one storage class. Found `{any}`", .{storage_classes});
+    }
+    return .{
+        types.items[0],
+        if (storage_classes.items.len == 0) null else storage_classes.items[0],
+    };
+}
+
+const ParseDeclOption = struct { only_fn_decl: bool = false };
+
+fn parseDecl(p: *Self, option: ParseDeclOption) ParseError!*Ast.Decl {
     if (p.isFnDecl()) {
-        const fn_decl = try p.parseFnDecl(.{ .only_decl = true });
+        const fn_decl = try p.parseFnDecl(.{ .only_decl = option.only_fn_decl });
         return .fnDecl(p.arena, fn_decl);
     }
+    return .variableDecl(p.arena, try p.parseVarDecl());
+}
 
-    _ = try p.consume(.Int);
+fn parseVarDecl(p: *Self) ParseError!*Ast.VarDecl {
+    const var_type, const storage_class = try p.parseTypeAndStorageClass();
+    _ = var_type;
+
     const ident_token = try p.consume(.Ident);
     const ident = ident_token.lexeme;
 
-    if (std.ascii.isDigit(ident[0])) {
+    if (isDigit(ident[0])) {
         try p.parseError(ParseError.InvalidIdent, "identifier should not start with digit. Found `{s}` << {s} >>", .{ ident, @tagName(ident_token.type) });
     }
 
@@ -139,11 +185,18 @@ fn parseDecl(p: *Self) ParseError!*Ast.Decl {
         var_initializer = try p.parseExpr(0);
     }
     _ = try p.consume(.Semicolon);
-    return .variableDecl(p.arena, ident, var_initializer, ident_token.line, ident_token.start);
+    return .init(p.arena, ident, var_initializer, storage_class, ident_token.line, ident_token.start);
 }
 
 fn isFnDecl(p: Self) bool {
-    return p.peek().type == .Int and p.peekOffset(1).type == .Ident and p.peekOffset(2).type == .LParen;
+    var peek_offset: i8 = 0;
+    while (p.isMaybeDecl(peek_offset)) peek_offset += 1;
+
+    if (p.peekOffset(peek_offset).type != .Ident) return false;
+    peek_offset += 1;
+
+    if (p.peekOffset(peek_offset).type != .LParen) return false;
+    return true;
 }
 
 fn parseFnParams(p: *Self) ParseError!ArrayList(*Ast.FnParam) {
@@ -243,6 +296,11 @@ fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
     };
 }
 
+fn isExternOrStaticVar(decl: *const Ast.Decl) bool {
+    if (decl.* != .Var) return false;
+    return decl.Var.storage_class == .Extern or decl.Var.storage_class == .Static;
+}
+
 fn parseSwitchStmt(p: *Self) ParseError!*Ast.Stmt {
     const switch_token = try p.consume(.Switch);
     _ = try p.consume(.LParen);
@@ -262,7 +320,7 @@ fn parseSwitchStmt(p: *Self) ParseError!*Ast.Stmt {
             if (item.* == .Stmt and (item.Stmt.* == .Case or item.Stmt.* == .Default)) {
                 case_found = true;
             }
-            if (case_found and item.* == .Decl) {
+            if (case_found and item.* == .Decl and !isExternOrStaticVar(item.Decl)) {
                 try p.parseErrorOnToken(
                     ParseError.UnexpectedToken,
                     peeked_token,
@@ -302,9 +360,8 @@ fn parseForStmt(p: *Self) ParseError!*Ast.Stmt {
 }
 
 fn parseForInit(p: *Self) ParseError!*Ast.ForInit {
-    const peeked_token = p.peek();
-    if (peeked_token.type == .Int) {
-        const decl = try p.parseDecl();
+    if (p.isMaybeDecl(0)) {
+        const decl = try p.parseDecl(.{ .only_fn_decl = true });
         if (decl.* != .Var) {
             try p.parseError(
                 ParseError.UnexpectedToken,
@@ -377,7 +434,7 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
     switch (token.type) {
         .IntLiteral => {
             const int_literal = try p.consume(.IntLiteral);
-            const value = std.fmt.parseInt(i64, int_literal.lexeme, 10) catch {
+            const value = std.fmt.parseInt(i32, int_literal.lexeme, 10) catch {
                 try p.parseError(
                     ParseError.IntExpected,
                     "Expected int found `{s}` << {s} >>",
@@ -392,9 +449,6 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
             const inner_expr = try p.parseFactor();
             return .unaryExpr(p.arena, operator, inner_expr, op_token.line, op_token.start);
         },
-        // @todo - Maybe this should be handled like postfix
-        // With this rewrite here, I am losing that I have prefix incr/decr operator
-        // Works but code format/print doesn't look exactly same
         .MinusMinus, .PlusPlus => {
             const op_token = try p.consumeAny();
             const inner_expr = try p.parseFactor();
@@ -430,7 +484,7 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
         },
         else => try p.parseError(
             ParseError.UnexpectedToken,
-            "Unexpected token while parsing factor`{s}` << {s} >>",
+            "Unexpected token while parsing factor `{s}` << {s} >>",
             .{ token.lexeme, @tagName(token.type) },
         ),
     }
@@ -559,6 +613,8 @@ fn isBinaryOperator(token: *const Token) bool {
         .Question, // hack to get existing system work - maybe ternary is binary :D
         => true,
 
+        .Static,
+        .Extern,
         .Default,
         .Eof,
         .Ident,
@@ -604,6 +660,8 @@ fn isCompoundAssignmentOperator(token: *const Token) bool {
         .RightShiftEqual,
         => true,
 
+        .Static,
+        .Extern,
         .Comma,
         .Default,
         .Eof,
@@ -789,14 +847,15 @@ fn isAtEndOffset(p: Self, offset: usize) bool {
 
 pub const Ast = struct {
     pub const Program = struct {
-        fns: ArrayList(*FnDecl),
+        decls: ArrayList(*Decl),
 
-        pub fn init(allocator: Allocator, fns: ArrayList(*FnDecl)) *Program {
+        pub fn init(allocator: Allocator, decls: ArrayList(*Decl)) *Program {
             const pg = allocator.create(Program) catch unreachable;
-            pg.* = .{ .fns = fns };
+            pg.* = .{ .decls = decls };
             return pg;
         }
     };
+    pub const StorageClass = enum { Static, Extern };
 
     pub const Block = struct {
         block_item: ArrayList(*BlockItem),
@@ -838,33 +897,52 @@ pub const Ast = struct {
             return item;
         }
 
-        pub fn variableDecl(allocator: Allocator, ident: []const u8, init: ?*Expr, line: usize, start: usize) *Decl {
+        pub fn variableDecl(allocator: Allocator, var_decl: *VarDecl) *Decl {
             const item = allocator.create(Decl) catch unreachable;
-            const _var_decl = allocator.create(VarDecl) catch unreachable;
-            _var_decl.* = .{ .ident = ident, .init = init, .loc = .{ .line = line, .start = start } };
-            item.* = .{ .Var = _var_decl };
+            item.* = .{ .Var = var_decl };
             return item;
         }
     };
 
     pub const VarDecl = struct {
         ident: []const u8,
-        init: ?*Expr,
+        initializer: ?*Expr,
+        storage_class: ?StorageClass,
         loc: SourceLocation,
+
+        pub fn init(
+            allocator: Allocator,
+            ident: []const u8,
+            initializer: ?*Expr,
+            storage_class: ?StorageClass,
+            line: usize,
+            start: usize,
+        ) *@This() {
+            const var_decl = allocator.create(VarDecl) catch unreachable;
+            var_decl.* = .{
+                .ident = ident,
+                .initializer = initializer,
+                .storage_class = storage_class,
+                .loc = .{ .line = line, .start = start },
+            };
+            return var_decl;
+        }
     };
 
     pub const FnDecl = struct {
         name: []const u8,
         params: ArrayList(*FnParam),
         body: ?*Block,
+        storage_class: ?StorageClass,
         loc: SourceLocation,
 
-        pub fn init(allocator: Allocator, name: []const u8, params: ArrayList(*FnParam), body: ?*Block, line: usize, start: usize) *FnDecl {
+        pub fn init(allocator: Allocator, name: []const u8, params: ArrayList(*FnParam), body: ?*Block, storage_class: ?StorageClass, line: usize, start: usize) *FnDecl {
             const fn_decl = allocator.create(FnDecl) catch unreachable;
             fn_decl.* = .{
                 .name = name,
                 .params = params,
                 .body = body,
+                .storage_class = storage_class,
                 .loc = .{ .line = line, .start = start },
             };
             return fn_decl;
@@ -885,7 +963,7 @@ pub const Ast = struct {
         }
     };
 
-    // @note - all type need SourceLocation, instead of tagged union should I have use normal union type?
+    // @note - all type need SourceLocation, instead of tagged union should I have use normal union type or struct hierarchy with @fieldParentPtr?
     // That way I can easily get source location in places where I need to display error with correct line on guard clause
     pub const Stmt = union(enum) {
         Return: struct { expr: *Expr, loc: SourceLocation },
@@ -1109,7 +1187,7 @@ pub const Ast = struct {
     };
 
     pub const Expr = union(enum) {
-        Constant: struct { value: i64, loc: SourceLocation },
+        Constant: struct { value: i32, loc: SourceLocation },
         Var: struct { ident: []const u8, loc: SourceLocation },
         Unary: struct { operator: UnaryOperator, expr: *Expr, loc: SourceLocation },
         Binary: struct { operator: BinaryOperator, left: *Expr, right: *Expr, loc: SourceLocation },
@@ -1228,7 +1306,7 @@ pub const Ast = struct {
             return expr;
         }
 
-        pub fn constantExpr(allocator: Allocator, value: i64, line: usize, start: usize) *Expr {
+        pub fn constantExpr(allocator: Allocator, value: i32, line: usize, start: usize) *Expr {
             const expr = allocator.create(Expr) catch unreachable;
             expr.* = .{
                 .Constant = .{
@@ -1274,6 +1352,8 @@ pub const Ast = struct {
 };
 
 const ParseError = error{
+    InvalidType,
+    InvalidStorageClass,
     TrainingComma,
     ExpectedOnlyFnDefinition,
     InvalidLValue,
@@ -1290,10 +1370,20 @@ pub const AstPrinter = struct {
     pub fn print(writer: *std.Io.Writer, pg: *const Ast.Program) void {
         write(writer, "-- AST --\n");
         write(writer, "program\n");
-        for (pg.fns.items) |fn_decl| {
-            printFnDecl(writer, fn_decl, 1, true);
-            write(writer, "\n");
+
+        for (pg.decls.items) |decl| {
+            switch (decl.*) {
+                .Fn => |fn_decl| {
+                    printFnDecl(writer, fn_decl, 1, true);
+                    write(writer, "\n");
+                },
+                .Var => |var_decl| {
+                    printVarDecl(writer, var_decl, 1, false);
+                    write(writer, ";");
+                },
+            }
         }
+
         write(writer, "\n");
     }
 
@@ -1346,7 +1436,7 @@ pub const AstPrinter = struct {
         _ = depth;
         write(writer, "int ");
         writeFmt(writer, "{s}", .{var_decl.ident});
-        if (var_decl.init) |initializer| {
+        if (var_decl.initializer) |initializer| {
             write(writer, " = ");
             printExpr(writer, initializer);
         }
@@ -1647,3 +1737,4 @@ const Lexer = @import("Lexer.zig");
 const TokenType = Lexer.TokenType;
 const Token = Lexer.Token;
 const Printer = @import("util.zig").Printer;
+const isDigit = std.ascii.isDigit;

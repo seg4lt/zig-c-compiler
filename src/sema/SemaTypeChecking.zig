@@ -23,24 +23,110 @@ pub fn check(opt: SemaOptions) SemaError!void {
     };
 }
 
-fn checkPg(s: Self, pg: *Ast.Program) SemaError!void {
-    for (pg.fns.items) |it| {
-        try s.checkFn(it);
+fn checkPg(s: Self, pg: *const Ast.Program) SemaError!void {
+    for (pg.decls.items) |decl| {
+        switch (decl.*) {
+            .Fn => |fn_decl| try s.checkFn(fn_decl, true),
+            .Var => |var_decl| try s.checkFileScopeVarDecl(var_decl),
+        }
     }
 }
 
-fn checkFn(s: Self, fn_decl: *Ast.FnDecl) SemaError!void {
-    var fn_params = ArrayList(SymbolTable.FnParam).init(s.symbol_table.arena);
+fn getVarInitialValue(s: Self, var_decl: *const Ast.VarDecl) SemaError!Symbol.InitialValue {
+    const initializer = var_decl.initializer orelse {
+        if (var_decl.storage_class == .Extern) {
+            return .no_initializer;
+        }
+        return .tentative;
+    };
+    if (initializer.* != .Constant) {
+        try s.semaError(
+            SemaError.InvalidVarInitializer,
+            var_decl.loc.line,
+            var_decl.loc.start,
+            "file scope variable initializer must be a constant expression",
+            .{},
+        );
+    }
+    return .initialValue(initializer.Constant.value);
+}
+
+fn checkFileScopeVarDecl(s: Self, var_decl: *const Ast.VarDecl) SemaError!void {
+    var initial_value = try s.getVarInitialValue(var_decl);
+    var is_global = var_decl.storage_class != .Static;
+
+    if (s.symbol_table.get(var_decl.ident)) |entry| {
+        std.debug.assert(entry == .Var);
+        const prev_attribute = entry.Var;
+        if (prev_attribute != .Static) {
+            try s.semaError(
+                SemaError.InvalidFileScopeVarDeclaration,
+                var_decl.loc.line,
+                var_decl.loc.start,
+                "file scope variable {s} should have static storage class",
+                .{var_decl.ident},
+            );
+        }
+
+        // this is always static as we already to != .Static check above
+        const prev_static_attr = prev_attribute.Static;
+
+        if (var_decl.storage_class == .Extern) {
+            is_global = prev_static_attr.global;
+        } else if (prev_static_attr.global != is_global) {
+            try s.semaError(
+                SemaError.InvalidFileScopeVarDeclaration,
+                var_decl.loc.line,
+                var_decl.loc.start,
+                "conflicting linkage for variable {s}",
+                .{var_decl.ident},
+            );
+        }
+        
+        const prev_initial_value = prev_static_attr.initial_value;
+        if (prev_initial_value == .initial) {
+            if (initial_value == .initial) {
+                try s.semaError(
+                    SemaError.InvalidFileScopeVarDeclaration,
+                    var_decl.loc.line,
+                    var_decl.loc.start,
+                    "redefinition of variable {s}",
+                    .{var_decl.ident},
+                );
+            }
+            initial_value = prev_initial_value;
+        } else if (initial_value != .initial and prev_initial_value == .tentative) {
+            initial_value = .tentative;
+        }
+    }
+    s.symbol_table.put(var_decl.ident, .staticVarSymbol(s.symbol_table.arena, var_decl.ident, is_global, initial_value));
+}
+
+fn checkFn(s: Self, fn_decl: *Ast.FnDecl, file_scope: bool) SemaError!void {
+    var fn_params = ArrayList(SymbolTable.Symbol.FnSymbol.Param).init(s.symbol_table.arena);
     for (fn_decl.params.items) |param| {
         fn_params.append(.fnParam(s.symbol_table.arena, param.ident, "int"));
     }
 
     const has_body = fn_decl.body != null;
     var already_defined = false;
+    var is_global = fn_decl.storage_class != .Static;
+
+    if (!file_scope and fn_decl.storage_class == .Static) {
+        try s.semaError(
+            SemaError.InvalidPlacement,
+            fn_decl.loc.line,
+            fn_decl.loc.start,
+            "static storage class not allowed here: {s}",
+            .{fn_decl.name},
+        );
+    }
+    var found_on_symbol_table: bool = false;
 
     if (s.symbol_table.get(fn_decl.name)) |prev_entry| {
+        found_on_symbol_table = true;
         switch (prev_entry) {
-            .Int => try s.semaError(
+            .Var => try s.semaError(
                 SemaError.InvalidType,
                 fn_decl.loc.line,
                 fn_decl.loc.start,
@@ -49,6 +135,7 @@ fn checkFn(s: Self, fn_decl: *Ast.FnDecl) SemaError!void {
             ),
             .Fn => |saved_fn| {
                 already_defined = saved_fn.defined;
+
                 if (already_defined and has_body) {
                     try s.semaError(
                         SemaError.DuplicateFnDeclaration,
@@ -58,6 +145,21 @@ fn checkFn(s: Self, fn_decl: *Ast.FnDecl) SemaError!void {
                         .{fn_decl.name},
                     );
                 }
+
+                if (saved_fn.global and fn_decl.storage_class == .Static) {
+                    try s.semaError(
+                        SemaError.InvalidFnLinkage,
+                        fn_decl.loc.line,
+                        fn_decl.loc.start,
+                        "conflicting linkage for function {s}",
+                        .{fn_decl.name},
+                    );
+                }
+
+                // if previous declaration is not global (aka static)
+                // and new declaration is global, we keep old linkage i.e. static
+                is_global &= saved_fn.global;
+
                 if (fn_decl.params.items.len != saved_fn.params.items.len) {
                     try s.semaError(
                         SemaError.InvalidFnParamCount,
@@ -70,13 +172,18 @@ fn checkFn(s: Self, fn_decl: *Ast.FnDecl) SemaError!void {
             },
         }
     }
-    const fn_type: Symbol = .fnSymbol(s.symbol_table.arena, fn_decl.name, fn_params, has_body or already_defined);
-    s.symbol_table.put(fn_decl.name, fn_type) catch unreachable;
+
+    // If we don't have this symbol on our table add one
+    // Or we always update symbol table if current AST we are type checking happens to have a body
+    // this is to make sure during ASM_IR phase we have same names for params
+    // Maybe this is not right way to do this as, this is kind of hidden dependency of sort??
+    if (!found_on_symbol_table or has_body) {
+        const fn_type: Symbol = .fnSymbol(s.symbol_table.arena, fn_decl.name, fn_params, is_global, has_body or already_defined);
+        s.symbol_table.put(fn_decl.name, fn_type);
+    }
 
     if (has_body) {
-        for (fn_decl.params.items) |it| {
-            s.symbol_table.put(it.ident, .intSymbol(s.symbol_table.arena, it.ident)) catch unreachable;
-        }
+        for (fn_decl.params.items) |it| s.symbol_table.put(it.ident, .localVarSymbol(s.symbol_table.arena, it.ident));
         if (fn_decl.body) |body| try s.checkBlock(body);
     }
 }
@@ -89,24 +196,74 @@ fn checkBlock(s: Self, block: *Ast.Block) SemaError!void {
 
 fn checkBlockItem(s: Self, block_item: *Ast.BlockItem) SemaError!void {
     switch (block_item.*) {
-        .Decl => |decl| try s.checkDecl(decl),
+        .Decl => |decl| try s.checkDecl(decl, .{ .file_scope = false, .static_allowed = true }),
         .Stmt => |stmt| try s.checkStmt(stmt),
     }
 }
 
-fn checkDecl(s: Self, decl: *Ast.Decl) SemaError!void {
+const CheckDeclOption = struct {
+    file_scope: bool,
+    static_allowed: bool,
+};
+
+fn checkDecl(s: Self, decl: *Ast.Decl, opt: CheckDeclOption) SemaError!void {
     switch (decl.*) {
-        .Var => |var_decl| try s.checkVarDecl(var_decl),
-        .Fn => |fn_decl| try s.checkFn(fn_decl),
+        .Var => |var_decl| try s.checkVarDecl(var_decl, opt.static_allowed),
+        .Fn => |fn_decl| try s.checkFn(fn_decl, opt.file_scope),
     }
 }
 
-fn checkVarDecl(s: Self, var_decl: *Ast.VarDecl) SemaError!void {
-    _ = s.symbol_table.get(var_decl.ident) orelse {
-        s.symbol_table.put(var_decl.ident, .intSymbol(s.symbol_table.arena, var_decl.ident)) catch unreachable;
+fn checkVarDecl(s: Self, var_decl: *Ast.VarDecl, static_allowed: bool) SemaError!void {
+    const storage_class = var_decl.storage_class orelse {
+        s.symbol_table.put(var_decl.ident, .localVarSymbol(s.symbol_table.arena, var_decl.ident));
+        if (var_decl.initializer) |initializer| try s.checkExpr(initializer);
+        return;
     };
-    if (var_decl.init) |initializer| {
-        try s.checkExpr(initializer);
+
+    switch (storage_class) {
+        .Extern => {
+            if (var_decl.initializer != null) {
+                try s.semaError(
+                    SemaError.InvalidVarInitializer,
+                    var_decl.loc.line,
+                    var_decl.loc.start,
+                    "extern variable cannot have an initializer: {s}",
+                    .{var_decl.ident},
+                );
+            }
+            if (s.symbol_table.get(var_decl.ident)) |prev_entry| {
+                if (prev_entry != .Var) try s.semaError(SemaError.InvalidType, var_decl.loc.line, var_decl.loc.start, "variable name conflicts with function name: {s}", .{var_decl.ident});
+            } else {
+                s.symbol_table.put(var_decl.ident, .staticVarSymbol(s.symbol_table.arena, var_decl.ident, true, .no_initializer));
+            }
+        },
+        .Static => {
+            if (!static_allowed) {
+                try s.semaError(
+                    SemaError.InvalidPlacement,
+                    var_decl.loc.line,
+                    var_decl.loc.start,
+                    "static storage class not allowed here: {s}",
+                    .{var_decl.ident},
+                );
+            }
+            const initial_value: Symbol.InitialValue = blk: {
+                const initializer = var_decl.initializer orelse {
+                    break :blk .initialValue(0);
+                };
+                if (initializer.* != .Constant) {
+                    try s.semaError(
+                        SemaError.InvalidVarInitializer,
+                        var_decl.loc.line,
+                        var_decl.loc.start,
+                        "static variable initializer must be a constant expression: {s}",
+                        .{var_decl.ident},
+                    );
+                }
+                break :blk .initialValue(initializer.Constant.value);
+            };
+            s.symbol_table.put(var_decl.ident, .staticVarSymbol(s.symbol_table.arena, var_decl.ident, false, initial_value));
+        },
     }
 }
 
@@ -135,7 +292,7 @@ fn checkStmt(s: Self, stmt: *Ast.Stmt) SemaError!void {
         },
         .For => |for_stmt| {
             switch (for_stmt.init.*) {
-                .Decl => |decl| try s.checkDecl(decl),
+                .Decl => |decl| try s.checkDecl(decl, .{ .file_scope = false, .static_allowed = false }),
                 .Expr => |expr| if (expr) |init| try s.checkExpr(init),
             }
             if (for_stmt.condition) |condition| try s.checkExpr(condition);
@@ -198,7 +355,13 @@ fn checkExpr(s: Self, expr: *Ast.Expr) SemaError!void {
         },
         .FnCall => |fn_call| {
             const saved_symbol = s.symbol_table.get(fn_call.ident) orelse {
-                try s.semaError(SemaError.UndeclaredFunction, fn_call.loc.line, fn_call.loc.start, "function {s} not defined", .{fn_call.ident});
+                try s.semaError(
+                    SemaError.UndeclaredFunction,
+                    fn_call.loc.line,
+                    fn_call.loc.start,
+                    "function {s} not defined",
+                    .{fn_call.ident},
+                );
             };
             if (saved_symbol != .Fn) {
                 try s.semaError(
@@ -211,11 +374,17 @@ fn checkExpr(s: Self, expr: *Ast.Expr) SemaError!void {
             }
             const fn_syn = saved_symbol.Fn;
             if (fn_syn.params.items.len != fn_call.args.items.len) {
-                try s.semaError(SemaError.WrongNumberOfArgument, fn_call.loc.line, fn_call.loc.start, "fn {s} expected {d} argument got {d}", .{
-                    fn_call.ident,
-                    fn_syn.params.items.len,
-                    fn_call.args.items.len,
-                });
+                try s.semaError(
+                    SemaError.WrongNumberOfArgument,
+                    fn_call.loc.line,
+                    fn_call.loc.start,
+                    "fn {s} expected {d} argument got {d}",
+                    .{
+                        fn_call.ident,
+                        fn_syn.params.items.len,
+                        fn_call.args.items.len,
+                    },
+                );
             }
             for (fn_call.args.items) |arg| {
                 try s.checkExpr(arg);

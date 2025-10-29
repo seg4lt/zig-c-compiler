@@ -41,18 +41,42 @@ fn emitProgram(s: Self, pg: Asm.Program) void {
         const progbits = "\t.section .note.GNU-stack,\"\",@progbits\n";
         s.write(progbits);
     };
-    for (pg.fns.items) |fn_defn| {
-        s.emitFnDecl(fn_defn);
+    for (pg.decls.items) |decl| {
+        switch (decl) {
+            .Fn => |fn_defn| {
+                s.emitFnDecl(fn_defn);
+            },
+            .StaticVar => |static_var| {
+                const symbol_name = switch (builtin.os.tag) {
+                    .macos => std.fmt.allocPrint(s.arena, "_{s}", .{static_var.ident}),
+                    else => static_var.ident,
+                };
+                s.write("\n");
+                if (static_var.global) s.writeFmt("\t.global {s}\n", .{symbol_name});
+                if (static_var.initializer != 0) s.write("\t.data\n") else s.write("\t.bss\n");
+                s.write("\t.balign 4\n");
+                s.writeFmt("{s}:\n", .{symbol_name});
+                if (static_var.initializer != 0) s.writeFmt("\t.long {d}\n", .{static_var.initializer}) else s.write("\t.zero 4\n");
+            },
+        }
     }
 }
 
-fn emitFnDecl(s: Self, fn_decl: Asm.FnDefn) void {
-    s.writeFmt("\t.globl\t{s}\n", .{fn_decl.name});
-    switch (builtin.os.tag) {
-        .linux => s.writeFmt("{s}:\n", .{fn_decl.name}),
-        .macos => s.writeFmt("_{s}:\n", .{fn_decl.name}),
+fn emitFnDecl(s: Self, fn_decl: Asm.FnDecl) void {
+    const symbol_name = switch (builtin.os.tag) {
+        .linux => std.fmt.allocPrint(s.arena, "{s}", .{fn_decl.ident}) catch unreachable,
+        .macos => std.fmt.allocPrint(s.arena, "_{s}", .{fn_decl.ident}) catch unreachable,
         else => |os| std.debug.panic("Unsupported OS for code emission: {s}", .{@tagName(os)}),
+    };
+
+    switch (fn_decl.global) {
+        // fn needs globl
+        true => s.writeFmt("\t.globl\t{s}\n", .{symbol_name}),
+        false => s.writeFmt("\t.local\t{s}\n", .{symbol_name}),
     }
+
+    s.write("\t.text\n");
+    s.writeFmt("{s}:\n", .{symbol_name});
 
     // prologue
     s.writeFmt("\tpushq\t{f}\n", .{Asm.Register.register(.bp, .qword)});
@@ -192,15 +216,20 @@ fn fmtUnaryOperator(operator: Asm.UnaryOperator) []const u8 {
 }
 
 fn fmtOperand(s: Self, op: Asm.Operand) []const u8 {
+    const allocPrint = std.fmt.allocPrint;
     return switch (op) {
-        .Imm => |imm| std.fmt.allocPrint(s.arena, "${d}", .{imm}) catch unreachable,
-        .Register => |r| std.fmt.allocPrint(s.arena, "{f}", .{r}) catch unreachable,
-        .Stack => |stack_size| std.fmt.allocPrint(s.arena, "{d}({f})", .{
+        .Imm => |imm| allocPrint(s.arena, "${d}", .{imm}),
+        .Register => |r| allocPrint(s.arena, "{f}", .{r}),
+        .Stack => |stack_size| allocPrint(s.arena, "{d}({f})", .{
             stack_size,
             Asm.Register.register(.bp, .qword),
-        }) catch unreachable,
+        }),
+        .Data => |ident| switch (builtin.os.tag) {
+            .macos => allocPrint(s.arena, "_{s}({f})", .{ ident, Asm.Register.register(.rip, .qword) }),
+            else => allocPrint(s.arena, "{s}({f})", .{ ident, Asm.Register.register(.rip, .qword) }),
+        },
         .Pseudo => unreachable, // all variable should be converted to relative stack value
-    };
+    } catch unreachable;
 }
 
 fn write(s: Self, bytes: []const u8) void {

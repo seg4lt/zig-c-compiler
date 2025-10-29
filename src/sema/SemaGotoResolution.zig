@@ -29,8 +29,11 @@ pub fn resolve(opt: SemaOptions) SemaError!void {
 }
 
 fn resolvePg(s: Self, pg: *Ast.Program) SemaError!void {
-    for (pg.fns.items) |it| {
-        try s.resolveFnDecl(it);
+    for (pg.decls.items) |it| {
+        switch (it.*) {
+            .Fn => |fn_decl| try s.resolveFnDecl(fn_decl),
+            .Var => {},
+        }
     }
 }
 

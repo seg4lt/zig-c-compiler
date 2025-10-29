@@ -52,8 +52,11 @@ pub fn label(opt: SemaOptions) SemaError!void {
 }
 
 fn labelPg(s: Self, pg: *Ast.Program) SemaError!void {
-    for (pg.fns.items) |it| {
-        try s.labelFnDecl(it);
+    for (pg.decls.items) |decl| {
+        switch (decl.*) {
+            .Fn => |fn_decl| try s.labelFnDecl(fn_decl),
+            .Var => {},
+        }
     }
 }
 

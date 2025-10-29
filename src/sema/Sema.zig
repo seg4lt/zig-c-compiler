@@ -1,3 +1,8 @@
+/// TODO
+/// - Update these to not throw errors, but instead return error sets
+/// - Because we know AST is is valid at this point, we can accumulate errors instead of bailing
+/// - For AstParser this one error at time as fine, but we can do better here !!!
+///
 pub fn sema(opt: SemaOptions) SemaError!void {
     try SemaIdentResolution.resolve(opt);
     if (opt.print_ast) print(opt, "Sema Phase: Ident Resolution");

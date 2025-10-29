@@ -25,9 +25,24 @@ fn resolvePg(s: Self, pg: *Ast.Program) SemaError!void {
     var new_scope = ScopeIdents.init(s.arena);
 
     const can_have_body = true;
-    for (pg.fns.items) |it| {
-        try s.resolveFnDecl(it, &new_scope, can_have_body);
+    for (pg.decls.items) |decl| {
+        switch (decl.*) {
+            .Fn => |fn_decl| try s.resolveFnDecl(fn_decl, &new_scope, can_have_body),
+            .Var => |var_decl| try s.resolveFileScopeVarDecl(var_decl, &new_scope),
+        }
     }
+}
+
+fn resolveFileScopeVarDecl(s: Self, var_decl: *Ast.VarDecl, scope: *ScopeIdents) SemaError!void {
+    const ident_info = Ident{
+        .type = .Var,
+        .from_current_scope = true,
+        .external_linkage = true,
+        .name = var_decl.ident,
+        .has_body = false,
+    };
+    scope.put(var_decl.ident, ident_info) catch unreachable;
+    if (var_decl.initializer) |initializer| try s.resolveExpr(initializer, scope);
 }
 
 fn semaError(p: Self, e: SemaError, line: usize, start: usize, comptime fmt: []const u8, args: anytype) SemaError!noreturn {
@@ -37,7 +52,7 @@ fn semaError(p: Self, e: SemaError, line: usize, start: usize, comptime fmt: []c
 
 fn resolveFnDecl(s: Self, fn_decl: *Ast.FnDecl, scope: *ScopeIdents, can_have_body: bool) SemaError!void {
     if (scope.get(fn_decl.name)) |saved_name| {
-        if (saved_name.type == .Fn and saved_name.has_body) {
+        if (saved_name.type == .Fn and saved_name.has_body and fn_decl.body != null) {
             try s.semaError(
                 SemaError.DuplicateIdentifier,
                 fn_decl.loc.line,
@@ -126,12 +141,12 @@ fn resolveDecl(s: Self, decl: *Ast.Decl, scope: *ScopeIdents) SemaError!void {
         .Var => |var_decl| {
             if (scope.get(var_decl.ident)) |entry| {
                 if (entry.from_current_scope) {
-                    if (entry.type == .Var) {
+                    if (!(entry.external_linkage and var_decl.storage_class == .Extern)) {
                         try s.semaError(
                             SemaError.DuplicateIdentifier,
                             var_decl.loc.line,
                             var_decl.loc.start,
-                            "duplicate variable declaration `{s}`\n",
+                            "conflicting variable declaration `{s}`\n",
                             .{var_decl.ident},
                         );
                     }
@@ -146,18 +161,20 @@ fn resolveDecl(s: Self, decl: *Ast.Decl, scope: *ScopeIdents) SemaError!void {
                     }
                 }
             }
+            const external_linkage = var_decl.storage_class == .Extern;
 
-            const new_ident = makeVar(s.arena, s.random, var_decl.ident);
+            const new_ident = if (external_linkage) var_decl.ident else makeVar(s.arena, s.random, var_decl.ident);
+
             const ident = Ident{
                 .from_current_scope = true,
-                .external_linkage = false,
+                .external_linkage = external_linkage,
                 .name = new_ident,
                 .type = .Var,
                 .has_body = false,
             };
             scope.put(var_decl.ident, ident) catch unreachable;
 
-            if (var_decl.init) |initializer| try s.resolveExpr(initializer, scope);
+            if (var_decl.initializer) |initializer| try s.resolveExpr(initializer, scope);
             var_decl.ident = new_ident;
         },
     }
@@ -331,10 +348,8 @@ const IdentType = enum { Fn, Var };
 fn createNewScope(scope: *ScopeIdents) ScopeIdents {
     const new_scope = scope.clone() catch unreachable;
     var it = new_scope.iterator();
-    var count: u32 = 0;
     while (it.next()) |entry| {
         entry.value_ptr.*.from_current_scope = false;
-        count += 1;
     }
     return new_scope;
 }

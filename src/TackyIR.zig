@@ -1,4 +1,5 @@
 arena: Allocator,
+symbol_table: *const SymbolTable,
 var_count: usize = 0,
 label_count: usize = 0,
 
@@ -7,11 +8,12 @@ const Self = @This();
 const Options = struct {
     arena: Allocator,
     pg: *const Ast.Program,
+    symbol_table: *const SymbolTable,
     print: bool = false,
 };
 
 pub fn genTacky(opt: Options) Tac.Program {
-    var self = Self{ .arena = opt.arena };
+    var self = Self{ .arena = opt.arena, .symbol_table = opt.symbol_table };
     const pg = self.genPg(opt.pg);
     if (opt.print) {
         var printer = Printer.init(opt.arena);
@@ -22,28 +24,62 @@ pub fn genTacky(opt: Options) Tac.Program {
 }
 
 fn genPg(s: *Self, pg: *const Ast.Program) Tac.Program {
-    var fns = ArrayList(Tac.FnDefn).init(s.arena);
+    var decls = ArrayList(Tac.TopLevelDecl).init(s.arena);
 
-    for (pg.fns.items) |fn_decl| {
-        if (fn_decl.body != null) {
-            const fn_tacky = s.genFnDefn(fn_decl);
-            fns.append(fn_tacky);
+    for (pg.decls.items) |decl| {
+        switch (decl.*) {
+            .Fn => |fn_decl| {
+                if (fn_decl.body != null) {
+                    const fn_tacky = s.genFnDefn(fn_decl);
+                    decls.append(fn_tacky);
+                }
+            },
+            .Var => {}, // noop
         }
     }
-    return .{ .fns = fns };
+
+    var symbol_iter = s.symbol_table.inner.iterator();
+    while (symbol_iter.next()) |symbol| {
+        switch (symbol.value_ptr.*) {
+            .Fn => {}, // noop
+            .Var => |var_symbol| {
+                switch (var_symbol) {
+                    .Local => {}, // noop
+                    .Static => |static_attr| {
+                        switch (static_attr.initial_value) {
+                            .no_initializer => {},
+                            .tentative => {
+                                decls.append(.topLevelStaticVar(symbol.key_ptr.*, static_attr.global, 0));
+                            },
+                            .initial => |initial_value| {
+                                decls.append(.topLevelStaticVar(symbol.key_ptr.*, static_attr.global, initial_value));
+                            },
+                        }
+                    },
+                }
+            },
+        }
+    }
+
+    return .{ .decls = decls };
 }
 
-fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.FnDefn {
+fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.TopLevelDecl {
     var instructions = ArrayList(Tac.Instruction).init(s.arena);
 
     if (fn_decl.body) |body| {
         s.genBlock(body, &instructions);
         instructions.append(.ret(.constant(0)));
     }
-    return .{
-        .name = s.arena.dupe(u8, fn_decl.name) catch unreachable,
-        .body = instructions,
+    const is_global = blk: {
+        if (s.symbol_table.get(fn_decl.name)) |symbol| {
+            std.debug.assert(symbol == .Fn);
+            break :blk symbol.Fn.global;
+        }
+        std.debug.panic("** Compiler Bug ** - function symbol not found in symbol table during tacky IR generation", .{});
     };
+
+    return .topLevelFn(s.arena.dupe(u8, fn_decl.name) catch unreachable, is_global, instructions);
 }
 
 fn genBlock(s: *Self, block: *const Ast.Block, instructions: *ArrayList(Tac.Instruction)) void {
@@ -62,7 +98,8 @@ fn genBlockItem(s: *Self, block_item: *ArrayList(*Ast.BlockItem), instructions: 
 fn genDecl(s: *Self, decl: *Ast.Decl, instructions: *ArrayList(Tac.Instruction)) void {
     switch (decl.*) {
         .Var => |var_decl| {
-            if (var_decl.init) |initializer| {
+            if (var_decl.initializer) |initializer| {
+                if (var_decl.storage_class == .Static) return;
                 const result = s.genExpr(initializer, instructions);
                 const dst: Tac.Val = .variable(s.arena.dupe(u8, var_decl.ident) catch unreachable);
                 instructions.append(.copy(result, dst));
@@ -227,7 +264,22 @@ fn genStmt(s: *Self, stmt: *const Ast.Stmt, instructions: *ArrayList(Tac.Instruc
             instructions.append(if_end_label);
         },
         .Compound => |compound_stmt| s.genBlock(compound_stmt.body, instructions),
-        .Expr => |expr_stmt| _ = s.genExpr(expr_stmt.expr, instructions),
+        .Expr => |expr_stmt| {
+            if (expr_stmt.expr.* == .Var) {
+                if (s.symbol_table.get(expr_stmt.expr.Var.ident)) |symbol| {
+                    if (symbol != .Var) {
+                        std.debug.panic("** Compiler Bug ** - expression statement with variable expr has to be a variable symbol!!!", .{});
+                    }
+                    if (symbol.Var == .Static) {
+                        // if variable is static we don't add initialization instuction
+                        // this is done on top-level declaration where we loop through all symbol and find static/global decls
+                        return;
+                    }
+                }
+            }
+
+            _ = s.genExpr(expr_stmt.expr, instructions);
+        },
         .Return => |ret| {
             const ret_val = s.genExpr(ret.expr, instructions);
             instructions.append(.ret(ret_val));
@@ -477,12 +529,39 @@ pub fn makeLabel(s: *Self, label: []const u8) Tac.Instruction {
 
 pub const Tac = struct {
     pub const Program = struct {
-        fns: ArrayList(FnDefn),
+        decls: ArrayList(TopLevelDecl),
     };
-    pub const FnDefn = struct {
-        name: []const u8,
-        body: ArrayList(Instruction),
+
+    pub const TopLevelDecl = union(enum) {
+        Fn: FnDecl,
+        StaticVar: StaticVarDecl,
+
+        pub const StaticVarDecl = struct { attribute: Attribute, initializer: i32 };
+        pub const FnDecl = struct { attribute: Attribute, instructions: ArrayList(Instruction) };
+
+        pub const Attribute = struct {
+            ident: []const u8,
+            global: bool,
+        };
+
+        pub fn topLevelFn(ident: []const u8, global: bool, instructions: ArrayList(Instruction)) @This() {
+            return .{
+                .Fn = .{
+                    .attribute = .{ .ident = ident, .global = global },
+                    .instructions = instructions,
+                },
+            };
+        }
+        pub fn topLevelStaticVar(ident: []const u8, global: bool, initializer: i32) @This() {
+            return .{
+                .StaticVar = .{
+                    .attribute = .{ .ident = ident, .global = global },
+                    .initializer = initializer,
+                },
+            };
+        }
     };
+
     pub const Instruction = union(enum) {
         Return: Val,
         Unary: struct { operator: UnaryOperator, src: Val, dst: Val },
@@ -596,14 +675,23 @@ const TackyIRPrinter = struct {
 
     fn printPg(s: @This(), pg: Tac.Program) void {
         s.write("-- Tacky IR --\n");
-        for (pg.fns.items) |fn_defn| {
-            s.printFnDecl(fn_defn);
+        for (pg.decls.items) |decl| {
+            switch (decl) {
+                .Fn => |fn_decl| s.printFnDecl(fn_decl),
+                .StaticVar => |static_var| s.printStaticVar(static_var),
+            }
         }
     }
-    fn printFnDecl(s: @This(), fn_defn: Tac.FnDefn) void {
-        s.write(fn_defn.name);
+    fn printStaticVar(s: @This(), static_var: Tac.TopLevelDecl.StaticVarDecl) void {
+        s.write("StaticVar(");
+        s.writeFmt("ident: {s}, global: {any}, init: {d}", .{ static_var.attribute.ident, static_var.attribute.global, static_var.initializer });
+        s.write(")\n");
+    }
+
+    fn printFnDecl(s: @This(), fn_defn: Tac.TopLevelDecl.FnDecl) void {
+        s.write(fn_defn.attribute.ident);
         s.write(":\n");
-        for (fn_defn.body.items) |inst| {
+        for (fn_defn.instructions.items) |inst| {
             s.printInst(inst);
         }
     }
@@ -732,10 +820,13 @@ const TackyIRPrinter = struct {
     }
 };
 
-const std = @import("std");
-const Ast = @import("AstParser.zig").Ast;
 // const ArrayList = std.ArrayList;
-const ArrayList = @import("from_scratch.zig").ArrayList;
+
+const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
+
+const ArrayList = @import("from_scratch.zig").ArrayList;
+const Ast = @import("AstParser.zig").Ast;
 const Printer = @import("util.zig").Printer;
+const SymbolTable = @import("SymbolTable.zig");

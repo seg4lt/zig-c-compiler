@@ -51,6 +51,7 @@ fn runCompiler(gpa: Allocator) !void {
     const tacky_pg = if (args.flag.tacky) TackyIR.genTacky(.{
         .arena = compiler_ctx.tackyArena(),
         .pg = program_ast orelse return error.OwwwMyyyGauudddAstIsNull,
+        .symbol_table = &compiler_ctx.symbol_table,
         .print = true,
     }) else null;
     compiler_ctx.resetScratchArena();
@@ -102,13 +103,13 @@ const builtin = @import("builtin");
 const CliArgs = @import("CliArgs.zig");
 const Lexer = @import("Lexer.zig");
 const AstParser = @import("AstParser.zig");
+const Sema = @import("sema/Sema.zig");
 const TackyIR = @import("TackyIR.zig");
 const Codegen = @import("Codegen.zig");
 const CodeEmission = @import("CodeEmission.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
 const CompilerContext = @import("CompilerContext.zig");
-const Sema = @import("sema/Sema.zig");
 const preprocessor = compiler_driver.preprocessor;
 const assembleAndLink = compiler_driver.assembleAndLink;
 const Allocator = std.mem.Allocator;

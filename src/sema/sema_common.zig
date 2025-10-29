@@ -9,6 +9,9 @@ pub const SemaOptions = struct {
 };
 
 pub const SemaError = error{
+    InvalidFnLinkage,
+    InvalidFileScopeVarDeclaration,
+    InvalidVarInitializer,
     DuplicateCase,
     DuplicateDefaultCase,
     DuplicateFnDeclaration,
