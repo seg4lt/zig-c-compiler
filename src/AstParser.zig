@@ -613,6 +613,8 @@ fn isBinaryOperator(token: *const Token) bool {
         .Question, // hack to get existing system work - maybe ternary is binary :D
         => true,
 
+        .Long,
+        .LongLiteral,
         .Static,
         .Extern,
         .Default,
@@ -660,6 +662,8 @@ fn isCompoundAssignmentOperator(token: *const Token) bool {
         .RightShiftEqual,
         => true,
 
+        .Long,
+        .LongLiteral,
         .Static,
         .Extern,
         .Comma,

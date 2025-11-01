@@ -48,8 +48,6 @@ pub fn parseTokens(opt: LexerOptions) LexerError![]const Token {
     return l.tokens.items;
 }
 
-
-
 fn appendError(s: *Self, comptime fmt: []const u8, args: anytype) void {
     s.error_reporter.addError(s.line, s.start, fmt, args);
 
@@ -279,16 +277,26 @@ fn comment(s: *Self) void {
 }
 
 fn number(s: *Self) void {
-    var found_alphabet = false;
-    while (!found_alphabet and !s.isAtEnd(0) and (std.ascii.isDigit(s.peek()) or std.ascii.isAlphabetic(s.peek()) or s.peek() == '_')) {
-        if (std.ascii.isAlphabetic(s.peek())) found_alphabet = true;
+    var alphabet_count: usize = 0;
+    while (!s.isAtEnd(0) and (isDigit(s.peek()) or isAlphabetic(s.peek()) or s.peek() == '_')) {
+        if (isAlphabetic(s.peek())) alphabet_count += 1;
         _ = s.consumeAny();
     }
-    if (found_alphabet) {
+    const num_type: TokenType = blk: {
+        if (alphabet_count == 0) break :blk .IntLiteral;
+
+        const type_hint = s.src[(s.current - alphabet_count)..s.current];
+        if (std.mem.eql(u8, "l", type_hint)) break :blk .LongLiteral;
+        if (std.mem.eql(u8, "L", type_hint)) break :blk .LongLiteral;
+
         s.appendError("invalid number\n", .{});
         return; // Don't add a token when we find an error
-    }
-    s.addToken(.IntLiteral);
+    };
+    s.addToken(num_type);
+}
+
+fn isValidAlphabetInNumber(c: u8) bool {
+    return c == 'L' or c == 'l';
 }
 
 fn consume(s: *Self, char: u8) u8 {
@@ -308,7 +316,6 @@ fn consumeAny(s: *Self) u8 {
     if (c == '\n') s.line += 1;
     return c;
 }
-
 
 fn identOrKeyword(s: *Self) void {
     while (!s.isAtEnd(0) and (isAlphabetic(s.peek()) or isDigit(s.peek()) or s.peek() == '_')) {
@@ -347,6 +354,7 @@ fn getTokenType(lexeme: []const u8) TokenType {
     if (eql(u8, "default", lexeme)) return .Default;
     if (eql(u8, "extern", lexeme)) return .Extern;
     if (eql(u8, "static", lexeme)) return .Static;
+    if (eql(u8, "long", lexeme)) return .Long;
     return .Ident;
 }
 
@@ -426,9 +434,13 @@ pub const TokenType = enum {
     //
     Ident,
     IntLiteral,
+    LongLiteral,
+
+    // builtin types
+    Int,
+    Long,
 
     // keyword
-    Int,
     Return,
     Void,
     If,
