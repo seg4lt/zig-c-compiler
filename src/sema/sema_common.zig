@@ -6,6 +6,20 @@ pub const SemaOptions = struct {
     random: std.Random,
     symbol_table: *SymbolTable,
     print_ast: bool = false,
+    print_expr_type: bool = false,
+    
+    pub fn clone(self: @This()) @This() {
+        return .{
+            .program = self.program,
+            .arena = self.arena,
+            .scratch_arena = self.scratch_arena,
+            .error_reporter = self.error_reporter,
+            .random = self.random,
+            .symbol_table = self.symbol_table,
+            .print_ast = self.print_ast,
+            .print_expr_type = self.print_expr_type,
+        };
+    }
 };
 
 pub const SemaError = error{

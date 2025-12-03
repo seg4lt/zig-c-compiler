@@ -230,6 +230,9 @@ fn resolveStmt(s: Self, stmt: *Ast.Stmt, scope: *ScopeIdents) SemaError!void {
 
 fn resolveExpr(s: Self, expr: *Ast.Expr, scope: *ScopeIdents) SemaError!void {
     switch (expr.*) {
+        .Cast => |cast_expr| {
+            try  s.resolveExpr(cast_expr.expr, scope);
+        },
         .Prefix => |prefix_expr| {
             const inner_expr = recurseGetGroupInnerExpr(prefix_expr.expr);
             if (inner_expr.* != .Var) {

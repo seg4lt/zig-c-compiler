@@ -282,21 +282,24 @@ fn number(s: *Self) void {
         if (isAlphabetic(s.peek())) alphabet_count += 1;
         _ = s.consumeAny();
     }
-    const num_type: TokenType = blk: {
-        if (alphabet_count == 0) break :blk .IntLiteral;
-
-        const type_hint = s.src[(s.current - alphabet_count)..s.current];
-        if (std.mem.eql(u8, "l", type_hint)) break :blk .LongLiteral;
-        if (std.mem.eql(u8, "L", type_hint)) break :blk .LongLiteral;
-
+    if (alphabet_count > 1) {
         s.appendError("invalid number\n", .{});
         return; // Don't add a token when we find an error
-    };
-    s.addToken(num_type);
-}
+    }
+    const token_type: TokenType = blk: {
+        if (alphabet_count != 1) break :blk .IntLiteral;
 
-fn isValidAlphabetInNumber(c: u8) bool {
-    return c == 'L' or c == 'l';
+        if (!isAlphabetic(s.src[s.current - 1])) {
+            s.appendError("invalid number, found alphabet in random place\n", .{});
+            return;
+        }
+        if (s.src[s.current - 1] != 'l' and s.src[s.current - 1] != 'L') {
+            s.appendError("invalid number\n", .{});
+            return;
+        }
+        break :blk .LongLiteral;
+    };
+    s.addToken(token_type);
 }
 
 fn consume(s: *Self, char: u8) u8 {
@@ -439,6 +442,8 @@ pub const TokenType = enum {
     // builtin types
     Int,
     Long,
+    Signed,
+    Unsigned,
 
     // keyword
     Return,

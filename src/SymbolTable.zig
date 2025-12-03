@@ -31,7 +31,7 @@ pub const Symbol = union(enum) {
     Var: VarSymbol,
     Fn: FnSymbol,
 
-    pub fn staticVarSymbol(allocator: Allocator, ident: []const u8, global: bool, initial_value: InitialValue) Symbol {
+    pub fn staticVarSymbol(allocator: Allocator, ident: []const u8, global: bool, initial_value: InitialValue, typez: *Ast.BuiltinType) Symbol {
         const owned_ident = allocator.dupe(u8, ident) catch unreachable;
         return .{
             .Var = .{
@@ -39,16 +39,18 @@ pub const Symbol = union(enum) {
                     .ident = owned_ident,
                     .global = global,
                     .initial_value = initial_value,
+                    .type = typez,
                 },
             },
         };
     }
-    pub fn localVarSymbol(allocator: Allocator, ident: []const u8) Symbol {
+    pub fn localVarSymbol(allocator: Allocator, ident: []const u8, typez: *Ast.BuiltinType) Symbol {
         const owned_ident = allocator.dupe(u8, ident) catch unreachable;
         return .{
             .Var = .{
                 .Local = .{
                     .ident = owned_ident,
+                    .type = typez,
                 },
             },
         };
@@ -57,9 +59,10 @@ pub const Symbol = union(enum) {
     pub fn fnSymbol(
         arena: Allocator,
         ident: []const u8,
-        params: ArrayList(FnSymbol.Param),
+        params: ArrayList([]const u8),
         global: bool,
         defined: bool,
+        typez: *Ast.BuiltinType,
     ) Symbol {
         const owned_ident = arena.dupe(u8, ident) catch unreachable;
         return .{
@@ -68,6 +71,7 @@ pub const Symbol = union(enum) {
                 .params = params,
                 .global = global,
                 .defined = defined,
+                .type = typez,
             },
         };
     }
@@ -75,35 +79,51 @@ pub const Symbol = union(enum) {
     pub const VarSymbol = union(enum) {
         // this static is not in terms of C, but rather ASM
         // static means we store this value in .data section of ASM file
-        Static: struct { ident: []const u8, global: bool, initial_value: InitialValue },
-        Local: struct { ident: []const u8 },
+        Static: struct { ident: []const u8, global: bool, initial_value: InitialValue, type: *Ast.BuiltinType },
+        Local: struct { ident: []const u8, type: *Ast.BuiltinType },
+
+        pub fn getType(self: @This()) *Ast.BuiltinType {
+            return switch (self) {
+                .Static => |s| s.type,
+                .Local => |l| l.type,
+            };
+        }
     };
 
     pub const FnSymbol = struct {
         ident: []const u8,
-        params: ArrayList(Param),
+        params: ArrayList([]const u8),
+        type: *Ast.BuiltinType,
 
         defined: bool,
         global: bool,
+    };
 
-        pub const Param = struct {
-            ident: []const u8,
-            type: []const u8,
+    pub const StaticInit = union(enum) {
+        Int: i64,
+        Long: i64,
 
-            pub fn fnParam(arena: Allocator, ident: []const u8, typez: []const u8) @This() {
-                const owned_ident = arena.dupe(u8, ident) catch unreachable;
-                const owned_type = arena.dupe(u8, typez) catch unreachable;
-                return .{ .ident = owned_ident, .type = owned_type };
-            }
-        };
+        pub fn init(constant: Ast.Constant) @This() {
+            return switch (constant) {
+                .Int => |v| int(v),
+                .Long => |v| long(v),
+            };
+        }
+
+        pub fn int(value: i64) @This() {
+            return .{ .Int = value };
+        }
+        pub fn long(value: i64) @This() {
+            return .{ .Long = value };
+        }
     };
 
     pub const InitialValue = union(enum) {
         tentative,
-        initial: i32,
+        initial: StaticInit,
         no_initializer,
 
-        pub fn initialValue(value: i32) @This() {
+        pub fn initialValue(value: StaticInit) @This() {
             return .{ .initial = value };
         }
     };
@@ -114,3 +134,5 @@ const Allocator = std.mem.Allocator;
 // const ArrayList = std.ArrayList;
 const ArrayList = @import("from_scratch.zig").ArrayList;
 const StringHashMap = std.StringHashMap;
+const AstParser = @import("AstParser.zig");
+const Ast = AstParser.Ast;

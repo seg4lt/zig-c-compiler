@@ -222,6 +222,7 @@ fn labelStmt(s: Self, stmt: *Ast.Stmt, labels: *Labels) SemaError!void {
 }
 fn labelExpr(s: Self, expr: *Ast.Expr, labels: *Labels) SemaError!void {
     switch (expr.*) {
+        .Cast => |cast_expr| try s.labelExpr(cast_expr.expr, labels),
         .Prefix => |prefix| try s.labelExpr(prefix.expr, labels),
         .FnCall => |fn_call| {
             for (fn_call.args.items) |arg| {

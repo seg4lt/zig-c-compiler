@@ -48,47 +48,47 @@ fn runCompiler(gpa: Allocator) !void {
     compiler_ctx.resetScratchArena();
     compiler_ctx.deinitLexerArena();
 
-    const tacky_pg = if (args.flag.tacky) TackyIR.genTacky(.{
-        .arena = compiler_ctx.tackyArena(),
-        .pg = program_ast orelse return error.OwwwMyyyGauudddAstIsNull,
-        .symbol_table = &compiler_ctx.symbol_table,
-        .print = true,
-    }) else null;
-    compiler_ctx.resetScratchArena();
-    compiler_ctx.deinitParserArena();
-    compiler_ctx.deinitSemaArena();
+    // const tacky_pg = if (args.flag.tacky) TackyIR.genTacky(.{
+    //     .arena = compiler_ctx.tackyArena(),
+    //     .pg = program_ast orelse return error.OwwwMyyyGauudddAstIsNull,
+    //     .symbol_table = &compiler_ctx.symbol_table,
+    //     .print = true,
+    // }) else null;
+    // compiler_ctx.resetScratchArena();
+    // compiler_ctx.deinitParserArena();
+    // compiler_ctx.deinitSemaArena();
 
-    const codegen_pg = if (args.flag.codegen) Codegen.emit(.{
-        .arena = compiler_ctx.codegenArena(),
-        .scratch_arena = compiler_ctx.scratchArena(),
-        .pg = tacky_pg orelse return error.BooooYourEyeRrrrIsNull,
-        .symbol_table = &compiler_ctx.symbol_table,
-        .print_codegen = true,
-    }) else null;
-    compiler_ctx.resetScratchArena();
-    compiler_ctx.deinitTackyArena();
+    // const codegen_pg = if (args.flag.codegen) Codegen.emit(.{
+    //     .arena = compiler_ctx.codegenArena(),
+    //     .scratch_arena = compiler_ctx.scratchArena(),
+    //     .pg = tacky_pg orelse return error.BooooYourEyeRrrrIsNull,
+    //     .symbol_table = &compiler_ctx.symbol_table,
+    //     .print_codegen = true,
+    // }) else null;
+    // compiler_ctx.resetScratchArena();
+    // compiler_ctx.deinitTackyArena();
 
-    if (args.flag.assemble) {
-        try CodeEmission.emit(.{
-            .arena = compiler_ctx.codeEmissionArena(),
-            .scratch_arena = compiler_ctx.scratchArena(),
-            .src_path_no_ext = args.src_path[0 .. args.src_path.len - 2],
-            .pg = codegen_pg orelse return error.WaattDHekkCogegenProgramIsNull,
-            .symbol_table = &compiler_ctx.symbol_table,
-            .print = true,
-        });
-    }
-    compiler_ctx.resetScratchArena();
-    compiler_ctx.deinitCodegenArena();
-    compiler_ctx.deinitCodeEmissionArena();
+    // if (args.flag.assemble) {
+    //     try CodeEmission.emit(.{
+    //         .arena = compiler_ctx.codeEmissionArena(),
+    //         .scratch_arena = compiler_ctx.scratchArena(),
+    //         .src_path_no_ext = args.src_path[0 .. args.src_path.len - 2],
+    //         .pg = codegen_pg orelse return error.WaattDHekkCogegenProgramIsNull,
+    //         .symbol_table = &compiler_ctx.symbol_table,
+    //         .print = true,
+    //     });
+    // }
+    // compiler_ctx.resetScratchArena();
+    // compiler_ctx.deinitCodegenArena();
+    // compiler_ctx.deinitCodeEmissionArena();
 
-    if (args.flag.link) {
-        assembleAndLink(
-            compiler_ctx.scratchArena(),
-            args.src_path[0 .. args.src_path.len - 2],
-            args.output_type,
-        );
-    }
+    // if (args.flag.link) {
+    //     assembleAndLink(
+    //         compiler_ctx.scratchArena(),
+    //         args.src_path[0 .. args.src_path.len - 2],
+    //         args.output_type,
+    //     );
+    // }
 }
 
 fn getAllocator() struct { Allocator, bool } {
@@ -104,9 +104,9 @@ const CliArgs = @import("CliArgs.zig");
 const Lexer = @import("Lexer.zig");
 const AstParser = @import("AstParser.zig");
 const Sema = @import("sema/Sema.zig");
-const TackyIR = @import("TackyIR.zig");
-const Codegen = @import("Codegen.zig");
-const CodeEmission = @import("CodeEmission.zig");
+// const TackyIR = @import("TackyIR.zig");
+// const Codegen = @import("Codegen.zig");
+// const CodeEmission = @import("CodeEmission.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
 const CompilerContext = @import("CompilerContext.zig");

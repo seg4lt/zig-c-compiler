@@ -70,14 +70,15 @@ const ParseFnDecl = struct {
 
 fn parseFnDecl(p: *Self, opt: ParseFnDecl) ParseError!*Ast.FnDecl {
     const return_type, const storage_class = try p.parseTypeAndStorageClass();
-    _ = return_type;
 
     const ident = try p.consume(.Ident);
-    const params = try p.parseFnParams();
+    const params, const params_type = try p.parseFnParams();
+
+    const fn_type = Ast.BuiltinType.fnType(p.arena, return_type, params_type);
 
     if (p.peek().type == .Semicolon) {
         _ = try p.consume(.Semicolon);
-        return Ast.FnDecl.init(p.arena, ident.lexeme, params, null, storage_class, ident.line, ident.start);
+        return Ast.FnDecl.init(p.arena, ident.lexeme, fn_type, params, null, storage_class, ident.line, ident.start);
     }
     if (opt.only_decl) {
         try p.parseError(
@@ -87,7 +88,7 @@ fn parseFnDecl(p: *Self, opt: ParseFnDecl) ParseError!*Ast.FnDecl {
         );
     }
     const body = try p.parseBlock();
-    return .init(p.arena, ident.lexeme, params, body, storage_class, ident.line, ident.start);
+    return .init(p.arena, ident.lexeme, fn_type, params, body, storage_class, ident.line, ident.start);
 }
 
 fn parseBlock(p: *Self) ParseError!*Ast.Block {
@@ -104,7 +105,7 @@ fn parseBlock(p: *Self) ParseError!*Ast.Block {
 
 fn isMaybeDecl(p: Self, offset: i8) bool {
     return switch (p.peekOffset(offset).type) {
-        .Int, .Static, .Extern => true,
+        .Int, .Static, .Extern, .Long => true,
         else => false,
     };
 }
@@ -124,13 +125,41 @@ fn parseBlockItem(p: *Self) ParseError!*Ast.BlockItem {
     return .stmt(p.arena, try p.parseStmt());
 }
 
-fn parseTypeAndStorageClass(p: *Self) ParseError!struct { []const u8, ?Ast.StorageClass } {
+fn parseType(p: *Self, type_hints: []const []const u8) ParseError!*Ast.BuiltinType {
+    if (type_hints.len == 0) try p.parseError(
+        ParseError.InvalidType,
+        "unable to parse type",
+        .{},
+    );
+    switch (type_hints.len) {
+        1 => {
+            if (eql(u8, "long", type_hints[0])) return .longType(p.arena);
+            if (eql(u8, "int", type_hints[0])) return .intType(p.arena);
+            return try p.parseError(ParseError.InvalidType, "invalid type `{s}`", .{type_hints[0]});
+        },
+        2 => {
+            if (hasItem(type_hints, "long")) return .longType(p.arena);
+            if (hasItem(type_hints, "int")) return .intType(p.arena);
+            try p.parseError(ParseError.InvalidType, "invalid type `{any}`", .{type_hints});
+        },
+        else => try p.parseError(ParseError.InvalidType, "invalid type `{any}`", .{type_hints}),
+    }
+}
+
+fn hasItem(haystack: []const []const u8, needle: []const u8) bool {
+    for (haystack) |item| {
+        if (eql(u8, item, needle)) return true;
+    }
+    return false;
+}
+
+fn parseTypeAndStorageClass(p: *Self) ParseError!struct { *Ast.BuiltinType, ?Ast.StorageClass } {
     var types: ArrayList([]const u8) = .init(p.scratch_arena);
     var storage_classes: ArrayList(Ast.StorageClass) = .init(p.scratch_arena);
     while (true) {
         const peeked_token = p.peek();
         switch (peeked_token.type) {
-            .Int => {
+            .Int, .Long => {
                 _ = try p.consumeAny();
                 types.append(peeked_token.lexeme);
             },
@@ -146,14 +175,13 @@ fn parseTypeAndStorageClass(p: *Self) ParseError!struct { []const u8, ?Ast.Stora
         }
     }
 
-    if (types.items.len != 1) {
-        try p.parseError(ParseError.InvalidType, "decl must have only one type. Found `{any}`", .{types});
-    }
+    const typez = try p.parseType(types.items);
+
     if (storage_classes.items.len > 1) {
         try p.parseError(ParseError.InvalidStorageClass, "decl must have only one storage class. Found `{any}`", .{storage_classes});
     }
     return .{
-        types.items[0],
+        typez,
         if (storage_classes.items.len == 0) null else storage_classes.items[0],
     };
 }
@@ -170,8 +198,7 @@ fn parseDecl(p: *Self, option: ParseDeclOption) ParseError!*Ast.Decl {
 
 fn parseVarDecl(p: *Self) ParseError!*Ast.VarDecl {
     const var_type, const storage_class = try p.parseTypeAndStorageClass();
-    _ = var_type;
-
+    std.log.debug("{any}", .{var_type});
     const ident_token = try p.consume(.Ident);
     const ident = ident_token.lexeme;
 
@@ -185,7 +212,7 @@ fn parseVarDecl(p: *Self) ParseError!*Ast.VarDecl {
         var_initializer = try p.parseExpr(0);
     }
     _ = try p.consume(.Semicolon);
-    return .init(p.arena, ident, var_initializer, storage_class, ident_token.line, ident_token.start);
+    return Ast.VarDecl.init(p.arena, ident, var_type, var_initializer, storage_class, ident_token.line, ident_token.start);
 }
 
 fn isFnDecl(p: Self) bool {
@@ -199,23 +226,26 @@ fn isFnDecl(p: Self) bool {
     return true;
 }
 
-fn parseFnParams(p: *Self) ParseError!ArrayList(*Ast.FnParam) {
+fn parseFnParams(p: *Self) ParseError!struct { ArrayList(*Ast.FnParam), ArrayList(*Ast.BuiltinType) } {
     _ = try p.consume(.LParen);
     var params = ArrayList(*Ast.FnParam).init(p.arena);
+    var params_type = ArrayList(*Ast.BuiltinType).init(p.arena);
 
     if (p.peek().type == .Void) {
         _ = try p.consume(.Void);
         _ = try p.consume(.RParen);
-        return params;
+        return .{ params, params_type };
     }
 
     while (p.peek().type != .RParen) {
-        // we only support int type for now
-        _ = try p.consume(.Int);
+        const param_type, const stclass = try p.parseTypeAndStorageClass();
+        if (stclass != null) try p.parseError(ParseError.UnexpectedToken, "fn param cannot have storage class", .{});
+
         const ident = try p.consume(.Ident);
 
         const param: *Ast.FnParam = .fnParam(p.arena, ident.lexeme, ident.line, ident.start);
         params.append(param);
+        params_type.append(param_type);
 
         // maybe we need to break if we can't find comma?
         if (p.peek().type == .Comma) {
@@ -230,7 +260,7 @@ fn parseFnParams(p: *Self) ParseError!ArrayList(*Ast.FnParam) {
         }
     }
     _ = try p.consume(.RParen);
-    return params;
+    return .{ params, params_type };
 }
 
 fn parseStmt(p: *Self) ParseError!*Ast.Stmt {
@@ -429,20 +459,51 @@ fn parseReturnStmt(p: *Self) ParseError!*Ast.Stmt {
     return .returnStmt(p.arena, expr, return_token.line, return_token.start);
 }
 
+// Most potentially I should do this on sema
+// int/long are easy, but after we introduce custom types
+// we will need to know which type it is, and it is on sema phase we know them
+// for now let's keep it simple
+fn parseOptionalTypeToken(p: *Self) ?*Ast.BuiltinType {
+    return switch (p.peek().type) {
+        .Int => .intType(p.arena),
+        .Long => .longType(p.arena),
+        else => null,
+    };
+}
+
+fn parseConstant(p: *Self) ParseError!*Ast.Expr {
+    const literal_value = try p.consumeAny();
+    const to_parse = if (std.ascii.isAlphabetic(literal_value.lexeme[literal_value.lexeme.len - 1])) literal_value.lexeme[0 .. literal_value.lexeme.len - 1] else literal_value.lexeme;
+    const value = std.fmt.parseInt(i64, to_parse, 10) catch {
+        try p.parseError(
+            ParseError.IntExpected,
+            "expected int found `{s}` << {s} >>",
+            .{ literal_value.lexeme, @tagName(literal_value.type) },
+        );
+    };
+    return switch (literal_value.type) {
+        .LongLiteral => .constantExpr(
+            p.arena,
+            .{ .Long = value },
+            literal_value.line,
+            literal_value.start,
+        ),
+        .IntLiteral => if (value > std.math.maxInt(i32))
+            .constantExpr(p.arena, .{ .Long = value }, literal_value.line, literal_value.start)
+        else
+            .constantExpr(p.arena, .{ .Int = @intCast(value) }, literal_value.line, literal_value.start),
+        else => try p.parseError(
+            ParseError.UnexpectedToken,
+            "unexpected token while parsing constant `{s}` << {s} >>",
+            .{ literal_value.lexeme, @tagName(literal_value.type) },
+        ),
+    };
+}
+
 fn parseFactor(p: *Self) ParseError!*Ast.Expr {
     const token = p.peek();
     switch (token.type) {
-        .IntLiteral => {
-            const int_literal = try p.consume(.IntLiteral);
-            const value = std.fmt.parseInt(i32, int_literal.lexeme, 10) catch {
-                try p.parseError(
-                    ParseError.IntExpected,
-                    "Expected int found `{s}` << {s} >>",
-                    .{ int_literal.lexeme, @tagName(token.type) },
-                );
-            };
-            return .constantExpr(p.arena, value, int_literal.line, int_literal.start);
-        },
+        .IntLiteral, .LongLiteral => return try p.parseConstant(),
         .BitNot, .Minus, .Not => {
             const op_token = try p.consumeAny();
             const operator = try p.parseUnaryOperator(op_token.type);
@@ -464,6 +525,14 @@ fn parseFactor(p: *Self) ParseError!*Ast.Expr {
         },
         .LParen => {
             const group_token = try p.consume(.LParen);
+            if (p.parseOptionalTypeToken()) |type_token| {
+                _ = try p.consumeAny();
+                _ = try p.consume(.RParen);
+                // cast expr
+                const expr_to_cast = try p.parseFactor();
+                return .castExpr(p.arena, type_token, expr_to_cast, group_token.line, group_token.start);
+            }
+
             const inner_expr = try p.parseExpr(0);
             const group_expr: *Ast.Expr = .groupExpr(p.arena, inner_expr, group_token.line, group_token.start);
             _ = try p.consume(.RParen);
@@ -615,6 +684,8 @@ fn isBinaryOperator(token: *const Token) bool {
 
         .Long,
         .LongLiteral,
+        .Signed,
+        .Unsigned,
         .Static,
         .Extern,
         .Default,
@@ -714,6 +785,8 @@ fn isCompoundAssignmentOperator(token: *const Token) bool {
         .Continue,
         .Switch,
         .Case,
+        .Signed,
+        .Unsigned,
         => false,
     };
 }
@@ -859,6 +932,77 @@ pub const Ast = struct {
             return pg;
         }
     };
+
+    pub const BuiltinType = union(enum) {
+        Int,
+        Long,
+        Fn: struct {
+            params: ArrayList(*BuiltinType),
+            return_type: *BuiltinType,
+        },
+
+        pub fn clone(self: *const @This(), allocator: Allocator) *BuiltinType {
+            const typez = allocator.create(BuiltinType) catch unreachable;
+            typez.* = switch (self.*) {
+                .Int => .Int,
+                .Long => .Long,
+                .Fn => |fn_type| blk: {
+                    var params_clone = ArrayList(*BuiltinType).init(allocator);
+                    for (fn_type.params.items) |param| {
+                        params_clone.append(param.clone(allocator));
+                    }
+                    break :blk .{ .Fn = .{ .params = params_clone, .return_type = fn_type.return_type.clone(allocator) } };
+                },
+            };
+            return typez;
+        }
+
+        pub fn intType(allocator: Allocator) *BuiltinType {
+            const typez = allocator.create(BuiltinType) catch unreachable;
+            typez.* = .Int;
+            return typez;
+        }
+
+        pub fn longType(allocator: Allocator) *BuiltinType {
+            const typez = allocator.create(BuiltinType) catch unreachable;
+            typez.* = .Long;
+            return typez;
+        }
+
+        pub fn fnType(
+            allocator: Allocator,
+            return_type: *BuiltinType,
+            params: ArrayList(*BuiltinType),
+        ) *BuiltinType {
+            const typez = allocator.create(BuiltinType) catch unreachable;
+            typez.* = .{ .Fn = .{ .return_type = return_type, .params = params } };
+            return typez;
+        }
+
+        pub fn isSame(self: *const BuiltinType, other: *const BuiltinType) bool {
+            return switch (self.*) {
+                .Int => switch (other.*) {
+                    .Int => true,
+                    else => false,
+                },
+                .Long => switch (other.*) {
+                    .Long => true,
+                    else => false,
+                },
+                .Fn => switch (other.*) {
+                    .Fn => |other_fn| {
+                        if (self.params.items.len != other_fn.params.items.len) return false;
+                        for (self.params.items, other_fn.params.items) |param, other_param| {
+                            if (!param.isSame(other_param)) return false;
+                        }
+                        return true;
+                    },
+                    else => false,
+                },
+            };
+        }
+    };
+
     pub const StorageClass = enum { Static, Extern };
 
     pub const Block = struct {
@@ -912,11 +1056,13 @@ pub const Ast = struct {
         ident: []const u8,
         initializer: ?*Expr,
         storage_class: ?StorageClass,
+        type: *BuiltinType,
         loc: SourceLocation,
 
         pub fn init(
             allocator: Allocator,
             ident: []const u8,
+            typez: *BuiltinType,
             initializer: ?*Expr,
             storage_class: ?StorageClass,
             line: usize,
@@ -927,6 +1073,7 @@ pub const Ast = struct {
                 .ident = ident,
                 .initializer = initializer,
                 .storage_class = storage_class,
+                .type = typez,
                 .loc = .{ .line = line, .start = start },
             };
             return var_decl;
@@ -937,15 +1084,17 @@ pub const Ast = struct {
         name: []const u8,
         params: ArrayList(*FnParam),
         body: ?*Block,
+        type: ?*BuiltinType,
         storage_class: ?StorageClass,
         loc: SourceLocation,
 
-        pub fn init(allocator: Allocator, name: []const u8, params: ArrayList(*FnParam), body: ?*Block, storage_class: ?StorageClass, line: usize, start: usize) *FnDecl {
+        pub fn init(allocator: Allocator, name: []const u8, fn_type: *BuiltinType, params: ArrayList(*FnParam), body: ?*Block, storage_class: ?StorageClass, line: usize, start: usize) *FnDecl {
             const fn_decl = allocator.create(FnDecl) catch unreachable;
             fn_decl.* = .{
                 .name = name,
                 .params = params,
                 .body = body,
+                .type = fn_type,
                 .storage_class = storage_class,
                 .loc = .{ .line = line, .start = start },
             };
@@ -1190,17 +1339,91 @@ pub const Ast = struct {
         is_default: bool,
     };
 
+    pub const Constant = union(enum) {
+        Int: i32,
+        Long: i64,
+
+        pub fn int(value: i32) @This() {
+            return .{ .Int = value };
+        }
+        pub fn long(value: i64) @This() {
+            return .{ .Long = value };
+        }
+    };
+
     pub const Expr = union(enum) {
-        Constant: struct { value: i32, loc: SourceLocation },
-        Var: struct { ident: []const u8, loc: SourceLocation },
-        Unary: struct { operator: UnaryOperator, expr: *Expr, loc: SourceLocation },
-        Binary: struct { operator: BinaryOperator, left: *Expr, right: *Expr, loc: SourceLocation },
-        Assignment: struct { src: *Expr, dst: *Expr, loc: SourceLocation },
-        Group: struct { expr: *Expr, loc: SourceLocation },
-        Prefix: struct { operator: PrefixOperator, expr: *Expr, loc: SourceLocation },
-        Postfix: struct { operator: PostfixOperator, expr: *Expr, loc: SourceLocation },
-        Ternary: struct { condition: *Expr, then: *Expr, @"else": *Expr, loc: SourceLocation },
-        FnCall: struct { ident: []const u8, args: ArrayList(*Expr), loc: SourceLocation },
+        Cast: struct { target_type: *BuiltinType, expr: *Expr, type: ?*BuiltinType, loc: SourceLocation },
+        Constant: struct { value: Constant, type: ?*BuiltinType, loc: SourceLocation },
+        Var: struct { ident: []const u8, type: ?*BuiltinType, loc: SourceLocation },
+        Unary: struct { operator: UnaryOperator, expr: *Expr, type: ?*BuiltinType, loc: SourceLocation },
+        Binary: struct { operator: BinaryOperator, left: *Expr, right: *Expr, type: ?*BuiltinType, loc: SourceLocation },
+        Assignment: struct { src: *Expr, dst: *Expr, type: ?*BuiltinType, loc: SourceLocation },
+        Group: struct { expr: *Expr, type: ?*BuiltinType, loc: SourceLocation },
+        Prefix: struct { operator: PrefixOperator, expr: *Expr, type: ?*BuiltinType, loc: SourceLocation },
+        Postfix: struct { operator: PostfixOperator, expr: *Expr, type: ?*BuiltinType, loc: SourceLocation },
+        Ternary: struct { condition: *Expr, then: *Expr, @"else": *Expr, type: ?*BuiltinType, loc: SourceLocation },
+        FnCall: struct { ident: []const u8, args: ArrayList(*Expr), type: ?*BuiltinType, loc: SourceLocation },
+
+        pub fn getLoc(self: *const @This()) SourceLocation {
+            return switch (self.*) {
+                .Cast => |cast_expr| cast_expr.loc,
+                .Constant => |constant_expr| constant_expr.loc,
+                .Var => |var_expr| var_expr.loc,
+                .Unary => |unary_expr| unary_expr.loc,
+                .Binary => |binary_expr| binary_expr.loc,
+                .Assignment => |assignment_expr| assignment_expr.loc,
+                .Group => |group_expr| group_expr.loc,
+                .Postfix => |postfix_expr| postfix_expr.loc,
+                .Ternary => |ternary_expr| ternary_expr.loc,
+                .FnCall => |fn_call_expr| fn_call_expr.loc,
+                .Prefix => |prefix_expr| prefix_expr.loc,
+            };
+        }
+
+        pub fn getType(self: *const @This()) ?*BuiltinType {
+            return switch (self.*) {
+                .Cast => |cast_expr| cast_expr.type,
+                .Constant => |constant_expr| constant_expr.type,
+                .Var => |var_expr| var_expr.type,
+                .Unary => |unary_expr| unary_expr.type,
+                .Binary => |binary_expr| binary_expr.type,
+                .Assignment => |assignment_expr| assignment_expr.type,
+                .Group => |group_expr| group_expr.type,
+                .Postfix => |postfix_expr| postfix_expr.type,
+                .Ternary => |ternary_expr| ternary_expr.type,
+                .FnCall => |fn_call_expr| fn_call_expr.type,
+                .Prefix => |prefix_expr| prefix_expr.type,
+            };
+        }
+
+        pub fn setType(self: *@This(), typez: *BuiltinType) void {
+            switch (self.*) {
+                .Prefix => |*prefix_expr| prefix_expr.type = typez,
+                .Cast => |*cast_expr| cast_expr.type = typez,
+                .Constant => |*constant_expr| constant_expr.type = typez,
+                .Var => |*var_expr| var_expr.type = typez,
+                .Unary => |*unary_expr| unary_expr.type = typez,
+                .Binary => |*binary_expr| binary_expr.type = typez,
+                .Assignment => |*assignment_expr| assignment_expr.type = typez,
+                .Group => |*group_expr| group_expr.type = typez,
+                .Postfix => |*postfix_expr| postfix_expr.type = typez,
+                .Ternary => |*ternary_expr| ternary_expr.type = typez,
+                .FnCall => |*fn_call_expr| fn_call_expr.type = typez,
+            }
+        }
+
+        pub fn castExpr(allocator: Allocator, target_type: *BuiltinType, expr: *Expr, line: usize, start: usize) *Expr {
+            const cast_expr = allocator.create(Expr) catch unreachable;
+            cast_expr.* = .{
+                .Cast = .{
+                    .target_type = target_type,
+                    .expr = expr,
+                    .type = null,
+                    .loc = .{ .line = line, .start = start },
+                },
+            };
+            return cast_expr;
+        }
 
         pub fn fnCallExpr(allocator: Allocator, ident: []const u8, args: ArrayList(*Expr), line: usize, start: usize) *Expr {
             const expr = allocator.create(Expr) catch unreachable;
@@ -1208,6 +1431,7 @@ pub const Ast = struct {
                 .FnCall = .{
                     .ident = ident,
                     .args = args,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1221,6 +1445,7 @@ pub const Ast = struct {
                     .condition = condition,
                     .then = then,
                     .@"else" = @"else",
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1233,6 +1458,7 @@ pub const Ast = struct {
                 .Postfix = .{
                     .operator = operator,
                     .expr = expr,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1245,6 +1471,7 @@ pub const Ast = struct {
                 .Prefix = .{
                     .operator = operator,
                     .expr = expr,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1256,6 +1483,7 @@ pub const Ast = struct {
             group_expr.* = .{
                 .Group = .{
                     .expr = expr,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1268,6 +1496,7 @@ pub const Ast = struct {
                 .Assignment = .{
                     .src = src,
                     .dst = dst,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1279,6 +1508,7 @@ pub const Ast = struct {
             expr.* = .{
                 .Var = .{
                     .ident = ident,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1292,6 +1522,7 @@ pub const Ast = struct {
                     .operator = operator,
                     .left = left,
                     .right = right,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1304,17 +1535,19 @@ pub const Ast = struct {
                 .Unary = .{
                     .operator = operator,
                     .expr = inner_expr,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
             return expr;
         }
 
-        pub fn constantExpr(allocator: Allocator, value: i32, line: usize, start: usize) *Expr {
+        pub fn constantExpr(allocator: Allocator, value: Constant, line: usize, start: usize) *Expr {
             const expr = allocator.create(Expr) catch unreachable;
             expr.* = .{
                 .Constant = .{
                     .value = value,
+                    .type = null,
                     .loc = .{ .line = line, .start = start },
                 },
             };
@@ -1617,8 +1850,21 @@ pub const AstPrinter = struct {
             .Null => write(writer, ";\n"),
         }
     }
+    fn printBuiltinType(writer: *std.Io.Writer, typez: *const Ast.BuiltinType) void {
+        switch (typez.*) {
+            .Int => write(writer, "int"),
+            .Long => write(writer, "long"),
+            else => |t| std.debug.panic("** Compiler Bug ** printBuiltinType called on function type. {s}", .{@tagName(t)}),
+        }
+    }
     fn printExpr(writer: *std.Io.Writer, expr: *const Ast.Expr) void {
         switch (expr.*) {
+            .Cast => |cast_expr| {
+                write(writer, "(");
+                printBuiltinType(writer, cast_expr.target_type);
+                write(writer, ")");
+                printExpr(writer, cast_expr.expr);
+            },
             .Prefix => |prefix_expr| {
                 writeFmt(writer, "{s}", .{
                     switch (prefix_expr.operator) {
@@ -1666,7 +1912,14 @@ pub const AstPrinter = struct {
                 printExpr(writer, assignment_expr.src);
             },
             .Constant => |constant_expr| {
-                writeFmt(writer, "{d}", .{constant_expr.value});
+                switch (constant_expr.value) {
+                    .Int => |int_value| {
+                        writeFmt(writer, "{d}", .{int_value});
+                    },
+                    .Long => |long_value| {
+                        writeFmt(writer, "{d}", .{long_value});
+                    },
+                }
             },
             .Unary => |unary_expr| {
                 write(writer, "(");
@@ -1729,6 +1982,46 @@ pub fn recurseGetGroupInnerExpr(expr: *Ast.Expr) *Ast.Expr {
     return recurseGetGroupInnerExpr(expr.Group.expr);
 }
 
+pub fn isSameType(type1: ?*const Ast.BuiltinType, type2: ?*const Ast.BuiltinType) bool {
+    if (type1 == null or type2 == null) return false;
+    return switch (type1.?.*) {
+        .Int => switch (type2.?.*) {
+            .Int => true,
+            else => false,
+        },
+        .Long => switch (type2.?.*) {
+            .Long => true,
+            else => false,
+        },
+        .Fn => |type1_fn| switch (type2.?.*) {
+            .Fn => |other_fn| {
+                if (!isSameType(type1_fn.return_type, other_fn.return_type)) return false;
+                if (type1_fn.params.items.len != other_fn.params.items.len) return false;
+                for (type1_fn.params.items, other_fn.params.items) |param, other_param| {
+                    if (!isSameType(param, other_param)) return false;
+                }
+                return true;
+            },
+            else => false,
+        },
+    };
+}
+
+pub fn getCommonType(allocator: Allocator, type1: *Ast.BuiltinType, type2: *Ast.BuiltinType) struct { bool, ?*Ast.BuiltinType } {
+    if (isSameType(type1, type2)) return .{ true, type1 };
+    if (type1.* == .Fn or type2.* == .Fn) return .{ false, .fnType(allocator, type1.Fn.return_type, type1.Fn.params) };
+    if (type1.* == .Long or type2.* == .Long) return .{ false, .longType(allocator) };
+    return .{ false, .intType(allocator) };
+}
+
+pub fn maybeExplicitCast(allocator: Allocator, expr: *Ast.Expr, target_type: *Ast.BuiltinType) *Ast.Expr {
+    if (isSameType(expr.getType(), target_type)) return expr;
+    const loc = expr.getLoc();
+    const cast_expr: *Ast.Expr = .castExpr(allocator, target_type, expr, loc.line, loc.start);
+    cast_expr.setType(target_type);
+    return cast_expr;
+}
+
 // const ArrayList = std.ArrayList;
 
 const std = @import("std");
@@ -1742,3 +2035,4 @@ const TokenType = Lexer.TokenType;
 const Token = Lexer.Token;
 const Printer = @import("util.zig").Printer;
 const isDigit = std.ascii.isDigit;
+const eql = std.mem.eql;

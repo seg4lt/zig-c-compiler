@@ -14,7 +14,11 @@ pub fn sema(opt: SemaOptions) SemaError!void {
     if (opt.print_ast) print(opt, "Sema Phase: Loop Labeling");
 
     try SemaTypeChecking.check(opt);
-    if (opt.print_ast) print(opt, "Sema Phase: Type Checking");
+    if (opt.print_ast) {
+        var clone = opt.clone();
+        clone.print_expr_type = true;
+        print(clone, "Sema Phase: Type Checking");
+    }
 }
 
 fn print(opt: SemaOptions, label: []const u8) void {

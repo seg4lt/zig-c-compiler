@@ -125,6 +125,7 @@ fn scanLabelOnStmt(s: Self, stmt: *Ast.Stmt, scope_labels: *ScopeLabels) SemaErr
 
 fn scanLabelOnExpr(s: Self, expr: *Ast.Expr, scope_labels: *ScopeLabels) SemaError!void {
     switch (expr.*) {
+        .Cast => |cast_expr| try s.scanLabelOnExpr(cast_expr.expr, scope_labels),
         .Prefix => |prefix_expr| try s.scanLabelOnExpr(prefix_expr.expr, scope_labels),
         .FnCall => |fn_call| {
             for (fn_call.args.items) |arg| {
@@ -212,6 +213,7 @@ fn resolveGotoOnStmt(s: Self, stmt: *Ast.Stmt, goto_labels: *ScopeLabels, scope_
 }
 fn resolveGotoOnExpr(s: Self, expr: *Ast.Expr, goto_labels: *ScopeLabels, scope_labels: *ScopeLabels) SemaError!void {
     switch (expr.*) {
+        .Cast => |cast_expr| try s.resolveGotoOnExpr(cast_expr.expr, goto_labels, scope_labels),
         .Prefix => |prefix_expr| try s.resolveGotoOnExpr(prefix_expr.expr, goto_labels, scope_labels),
         .FnCall => |fn_call| {
             for (fn_call.args.items) |arg| {

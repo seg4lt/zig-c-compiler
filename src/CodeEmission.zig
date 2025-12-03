@@ -48,7 +48,7 @@ fn emitProgram(s: Self, pg: Asm.Program) void {
             },
             .StaticVar => |static_var| {
                 const symbol_name = switch (builtin.os.tag) {
-                    .macos => std.fmt.allocPrint(s.arena, "_{s}", .{static_var.ident}),
+                    .macos => std.fmt.allocPrint(s.arena, "_{s}", .{static_var.ident}) catch unreachable,
                     else => static_var.ident,
                 };
                 s.write("\n");
