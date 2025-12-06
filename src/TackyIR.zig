@@ -1,5 +1,5 @@
 arena: Allocator,
-symbol_table: *const SymbolTable,
+symbol_table: *SymbolTable,
 var_count: usize = 0,
 label_count: usize = 0,
 
@@ -8,7 +8,7 @@ const Self = @This();
 const Options = struct {
     arena: Allocator,
     pg: *const Ast.Program,
-    symbol_table: *const SymbolTable,
+    symbol_table: *SymbolTable,
     print: bool = false,
 };
 
@@ -49,10 +49,10 @@ fn genPg(s: *Self, pg: *const Ast.Program) Tac.Program {
                         switch (static_attr.initial_value) {
                             .no_initializer => {},
                             .tentative => {
-                                decls.append(.topLevelStaticVar(symbol.key_ptr.*, static_attr.global, 0));
+                                decls.append(.topLevelStaticVar(symbol.key_ptr.*, static_attr.global, static_attr.type.clone(s.arena), .int(0)));
                             },
                             .initial => |initial_value| {
-                                decls.append(.topLevelStaticVar(symbol.key_ptr.*, static_attr.global, initial_value));
+                                decls.append(.topLevelStaticVar(symbol.key_ptr.*, static_attr.global, static_attr.type.clone(s.arena), initial_value));
                             },
                         }
                     },
@@ -69,7 +69,7 @@ fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.TopLevelDecl {
 
     if (fn_decl.body) |body| {
         s.genBlock(body, &instructions);
-        instructions.append(.ret(.constant(0)));
+        instructions.append(.ret(.constant(.int(0))));
     }
     const is_global = blk: {
         if (s.symbol_table.get(fn_decl.name)) |symbol| {
@@ -79,7 +79,7 @@ fn genFnDefn(s: *Self, fn_decl: *const Ast.FnDecl) Tac.TopLevelDecl {
         std.debug.panic("** Compiler Bug ** - function symbol not found in symbol table during tacky IR generation", .{});
     };
 
-    return .topLevelFn(s.arena.dupe(u8, fn_decl.name) catch unreachable, is_global, instructions);
+    return .topLevelFn(s.arena.dupe(u8, fn_decl.name) catch unreachable, is_global, fn_decl.type.?.clone(s.arena), instructions);
 }
 
 fn genBlock(s: *Self, block: *const Ast.Block, instructions: *ArrayList(Tac.Instruction)) void {
@@ -300,8 +300,8 @@ fn genSwitchStmt(s: *Self, stmt: Ast.SwitchStmt, instructions: *ArrayList(Tac.In
     for (stmt.case_labels.?.items) |label| {
         if (label.is_default) continue;
         // we create an expression to check if matches case we have
-        const case_value: Tac.Val = .constant(std.fmt.parseInt(u32, label.value, 10) catch unreachable);
-        const condition = s.makeVar();
+        const case_value: Tac.Val = .constant(.int(std.fmt.parseInt(i32, label.value, 10) catch unreachable));
+        const condition = s.makeVar(.intType(s.arena));
         instructions.append(.binary(.EqualEqual, condition_expr, case_value, condition));
 
         // we gen the instruction for the expr we created
@@ -336,10 +336,22 @@ fn recurseGetGroupInnerExpr(expr: *Ast.Expr) *Ast.Expr {
 
 fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruction)) Tac.Val {
     return switch (expr.*) {
+        .Cast => |cast_expr| {
+            const result = s.genExpr(cast_expr.expr, instructions);
+            const expr_type = expr.getType().?;
+            if (isSameType(expr_type, cast_expr.target_type)) return result;
+            const dst = s.makeVar(expr_type);
+            switch (expr_type.*) {
+                .Int => instructions.append(.truncate(result, dst)),
+                .Long => instructions.append(.signExtended(result, dst)),
+                else => std.debug.panic("** Compiler Bug ** - cast to unknown type: {any}", .{expr_type}),
+            }
+            return dst;
+        },
         .Prefix => |prefix_expr| {
             const inner_expr_result = s.genExpr(prefix_expr.expr, instructions);
-            const one: Tac.Val = .constant(1);
-            const dst = s.makeVar();
+            const one: Tac.Val = .constant(.int(1));
+            const dst = s.makeVar(expr.getType().?);
             switch (prefix_expr.operator) {
                 .Add => {
                     instructions.append(.binary(.Add, inner_expr_result, one, dst));
@@ -359,12 +371,12 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
                 const arg_val = s.genExpr(arg, instructions);
                 args.append(arg_val);
             }
-            const dst = s.makeVar();
+            const dst = s.makeVar(expr.getType().?);
             instructions.append(.fnCall(fn_call.ident, args, dst));
             return dst;
         },
         .Ternary => |ternary_expr| {
-            const dst = s.makeVar();
+            const dst = s.makeVar(expr.getType().?);
 
             const ternary_end = s.makeLabel("ternary_end");
             const ternary_else = s.makeLabel("ternary_else");
@@ -388,20 +400,20 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
         },
         .Postfix => |postfix| {
             const expr_result = s.genExpr(postfix.expr, instructions);
-            const prev_result_var = s.makeVar();
+            const prev_result_var = s.makeVar(postfix.expr.getType().?);
             const prev_value: Tac.Instruction = .copy(expr_result, prev_result_var);
 
             instructions.append(prev_value);
 
-            const one: Tac.Val = .constant(1);
+            const one: Tac.Val = .constant(.int(1));
             switch (postfix.operator) {
                 .Add => {
-                    const dst = s.makeVar();
+                    const dst = s.makeVar(postfix.expr.getType().?);
                     instructions.append(.binary(.Add, expr_result, one, dst));
                     instructions.append(.copy(dst, expr_result));
                 },
                 .Subtract => {
-                    const dst = s.makeVar();
+                    const dst = s.makeVar(postfix.expr.getType().?);
                     instructions.append(.binary(.Subtract, expr_result, one, dst));
                     instructions.append(.copy(dst, expr_result));
                 },
@@ -421,7 +433,7 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
         .Constant => |constant| .constant(constant.value),
         .Unary => |unary| {
             const src = s.genExpr(unary.expr, instructions);
-            const dst = s.makeVar();
+            const dst = s.makeVar(unary.expr.getType().?);
             const operator: Tac.UnaryOperator = switch (unary.operator) {
                 .Negate => .Negate,
                 .BitNot => .BitNot,
@@ -443,15 +455,15 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
                     instructions.append(.jumpIfZero(src2, false_label.Label));
 
                     // both conditions are true, dst = 1
-                    const result = s.makeVar();
-                    const one: Tac.Val = .constant(1);
+                    const result = s.makeVar(.intType(s.arena));
+                    const one: Tac.Val = .constant(.int(1));
                     instructions.append(.copy(one, result));
                     const end_label = s.makeLabel("and_condition_end");
                     instructions.append(.jump(end_label.Label));
 
                     // if condition is false
                     instructions.append(false_label);
-                    const zero: Tac.Val = .constant(0);
+                    const zero: Tac.Val = .constant(.int(0));
                     instructions.append(.copy(zero, result));
 
                     // end
@@ -469,15 +481,15 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
                     const src2 = s.genExpr(binary.right, instructions);
                     instructions.append(.jumpIfNotZero(src2, true_label.Label));
 
-                    const result = s.makeVar();
-                    const zero: Tac.Val = .constant(0);
+                    const result = s.makeVar(.intType(s.arena));
+                    const zero: Tac.Val = .constant(.int(0));
                     instructions.append(.copy(zero, result));
 
                     const end_label = s.makeLabel("or_condition_end");
                     instructions.append(.jump(end_label.Label));
                     instructions.append(true_label);
 
-                    const one: Tac.Val = .constant(1);
+                    const one: Tac.Val = .constant(.int(1));
                     instructions.append(.copy(one, result));
                     instructions.append(end_label);
 
@@ -486,7 +498,7 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
                 else => {
                     const left = s.genExpr(binary.left, instructions);
                     const right = s.genExpr(binary.right, instructions);
-                    const dst = s.makeVar();
+                    const dst = s.makeVar(binary.left.getType().?);
                     const op = switch (binary.operator) {
                         .Add => Tac.BinaryOperator.Add,
                         .Subtract => Tac.BinaryOperator.Subtract,
@@ -515,9 +527,10 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
     };
 }
 
-pub fn makeVar(s: *Self) Tac.Val {
+pub fn makeVar(s: *Self, typez: *Ast.BuiltinType) Tac.Val {
     defer s.var_count += 1;
     const var_name = std.fmt.allocPrint(s.arena, "tmp.{d}", .{s.var_count}) catch unreachable;
+    s.symbol_table.put(var_name, .localVarSymbol(s.symbol_table.arena, var_name, typez.clone(s.arena)));
     return .variable(var_name);
 }
 
@@ -536,26 +549,28 @@ pub const Tac = struct {
         Fn: FnDecl,
         StaticVar: StaticVarDecl,
 
-        pub const StaticVarDecl = struct { attribute: Attribute, initializer: i32 };
-        pub const FnDecl = struct { attribute: Attribute, instructions: ArrayList(Instruction) };
+        pub const StaticVarDecl = struct { attribute: Attribute, type: *Ast.BuiltinType, initializer: Symbol.StaticInit };
+        pub const FnDecl = struct { attribute: Attribute, instructions: ArrayList(Instruction), type: *Ast.BuiltinType };
 
         pub const Attribute = struct {
             ident: []const u8,
             global: bool,
         };
 
-        pub fn topLevelFn(ident: []const u8, global: bool, instructions: ArrayList(Instruction)) @This() {
+        pub fn topLevelFn(ident: []const u8, global: bool, typez: *Ast.BuiltinType, instructions: ArrayList(Instruction)) @This() {
             return .{
                 .Fn = .{
                     .attribute = .{ .ident = ident, .global = global },
+                    .type = typez,
                     .instructions = instructions,
                 },
             };
         }
-        pub fn topLevelStaticVar(ident: []const u8, global: bool, initializer: i32) @This() {
+        pub fn topLevelStaticVar(ident: []const u8, global: bool, typez: *Ast.BuiltinType, initializer: Symbol.StaticInit) @This() {
             return .{
                 .StaticVar = .{
                     .attribute = .{ .ident = ident, .global = global },
+                    .type = typez,
                     .initializer = initializer,
                 },
             };
@@ -572,6 +587,16 @@ pub const Tac = struct {
         JumpIfNotZero: struct { condition: Val, label: []const u8 },
         Label: []const u8,
         FnCall: struct { ident: []const u8, args: ArrayList(Val), dst: Val },
+        SignExtended: struct { src: Val, dst: Val },
+        Truncate: struct { src: Val, dst: Val },
+
+        pub fn signExtended(src: Val, dst: Val) Instruction {
+            return .{ .SignExtended = .{ .src = src, .dst = dst } };
+        }
+
+        pub fn truncate(src: Val, dst: Val) Instruction {
+            return .{ .Truncate = .{ .src = src, .dst = dst } };
+        }
 
         pub fn fnCall(ident: []const u8, args: ArrayList(Val), dst: Val) Instruction {
             return .{
@@ -629,10 +654,10 @@ pub const Tac = struct {
         }
     };
     pub const Val = union(enum) {
-        Const: i64,
+        Const: Ast.Constant,
         Var: []const u8,
 
-        pub fn constant(value: i64) Val {
+        pub fn constant(value: Ast.Constant) Val {
             return .{ .Const = value };
         }
 
@@ -684,7 +709,11 @@ const TackyIRPrinter = struct {
     }
     fn printStaticVar(s: @This(), static_var: Tac.TopLevelDecl.StaticVarDecl) void {
         s.write("StaticVar(");
-        s.writeFmt("ident: {s}, global: {any}, init: {d}", .{ static_var.attribute.ident, static_var.attribute.global, static_var.initializer });
+        s.writeFmt("ident: {s}, global: {any}", .{ static_var.attribute.ident, static_var.attribute.global });
+        switch (static_var.initializer) {
+            .Int => |i| s.writeFmt(", init: {d}", .{i}),
+            .Long => |l| s.writeFmt(", init: {d}", .{l}),
+        }
         s.write(")\n");
     }
 
@@ -698,6 +727,22 @@ const TackyIRPrinter = struct {
     fn printInst(s: @This(), inst: Tac.Instruction) void {
         s.write("  ");
         switch (inst) {
+            .Truncate => |truncate| {
+                s.write("Truncate(");
+                s.write("src: ");
+                s.printVal(truncate.src);
+                s.write(", dst: ");
+                s.printVal(truncate.dst);
+                s.write(")");
+            },
+            .SignExtended => |sign_extended| {
+                s.write("SignExtended(");
+                s.write("src: ");
+                s.printVal(sign_extended.src);
+                s.write(", dst: ");
+                s.printVal(sign_extended.dst);
+                s.write(")");
+            },
             .FnCall => |fn_call| {
                 s.write("FnCall(");
                 s.write(fn_call.ident);
@@ -806,7 +851,12 @@ const TackyIRPrinter = struct {
     fn printVal(s: @This(), val: Tac.Val) void {
         s.write("Val(");
         switch (val) {
-            .Const => |c| s.writeFmt("{d}", .{c}),
+            .Const => |c| {
+                switch (c) {
+                    .Int => |i| s.writeFmt("{d}", .{i}),
+                    .Long => |l| s.writeFmt("{d}", .{l}),
+                }
+            },
             .Var => |v| s.writeFmt("{s}", .{v}),
         }
         s.write(")");
@@ -827,6 +877,9 @@ const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
 
 const ArrayList = @import("from_scratch.zig").ArrayList;
-const Ast = @import("AstParser.zig").Ast;
+const AstParser = @import("AstParser.zig");
+const Ast = AstParser.Ast;
 const Printer = @import("util.zig").Printer;
 const SymbolTable = @import("SymbolTable.zig");
+const Symbol = SymbolTable.Symbol;
+const isSameType = AstParser.isSameType;
