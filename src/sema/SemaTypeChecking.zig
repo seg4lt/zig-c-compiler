@@ -92,7 +92,7 @@ fn checkFileScopeVarDecl(s: *Self, var_decl: *Ast.VarDecl) SemaError!void {
             var_decl.ident,
             is_global,
             initial_value,
-            var_decl.type,
+            var_decl.type.clone(s.symbol_table.arena),
         ),
     );
 }
@@ -140,7 +140,7 @@ fn checkFn(s: *Self, fn_decl: *Ast.FnDecl, file_scope: bool) SemaError!void {
     // this is to make sure during ASM_IR phase we have same names for params
     // Maybe this is not right way to do this as, this is kind of hidden dependency of sort??
     if (!found_on_symbol_table or has_body) {
-        const fn_symbol: Symbol = .fnSymbol(s.symbol_table.arena, fn_decl.name, fn_params, is_global, has_body or already_defined, fn_decl.type.?);
+        const fn_symbol: Symbol = .fnSymbol(s.symbol_table.arena, fn_decl.name, fn_params, is_global, has_body or already_defined, fn_decl.type.?.clone(s.symbol_table.arena));
         s.symbol_table.put(fn_decl.name, fn_symbol);
     }
 
@@ -148,7 +148,7 @@ fn checkFn(s: *Self, fn_decl: *Ast.FnDecl, file_scope: bool) SemaError!void {
         std.debug.assert(fn_decl.type != null);
 
         for (fn_decl.params.items, 0..) |it, i| {
-            const fn_param_type = fn_decl.type.?.Fn.params.items[i];
+            const fn_param_type = fn_decl.type.?.Fn.params.items[i].clone(s.symbol_table.arena);
             s.symbol_table.put(it.ident, .localVarSymbol(s.symbol_table.arena, it.ident, fn_param_type));
         }
         if (fn_decl.body) |body| {

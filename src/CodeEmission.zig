@@ -1,7 +1,7 @@
 arena: Allocator,
 scratch_arena: Allocator,
 writer: AnyWriter,
-symbol_table: *SymbolTable,
+backend_symbols: *const BackendSymbolTable,
 
 const Self = @This();
 
@@ -10,7 +10,7 @@ const Options = struct {
     scratch_arena: Allocator,
     src_path_no_ext: []const u8,
     pg: Asm.Program,
-    symbol_table: *SymbolTable,
+    backend_symbols: *const BackendSymbolTable,
     print: bool = false,
 };
 
@@ -19,7 +19,7 @@ pub fn emit(opt: Options) !void {
     const s = Self{
         .arena = opt.arena,
         .scratch_arena = opt.scratch_arena,
-        .symbol_table = opt.symbol_table,
+        .backend_symbols = opt.backend_symbols,
         .writer = buffer.writer().any(),
     };
     s.emitProgram(opt.pg);
@@ -53,10 +53,28 @@ fn emitProgram(s: Self, pg: Asm.Program) void {
                 };
                 s.write("\n");
                 if (static_var.global) s.writeFmt("\t.global {s}\n", .{symbol_name});
-                if (static_var.initializer != 0) s.write("\t.data\n") else s.write("\t.bss\n");
-                s.write("\t.balign 4\n");
+
+                const init_value: i64 = switch (static_var.initializer) {
+                    .Int => |i| i,
+                    .Long => |l| l,
+                };
+
+                if (init_value != 0) s.write("\t.data\n") else s.write("\t.bss\n");
+                s.writeFmt("\t.balign {d}\n", .{static_var.alignment});
                 s.writeFmt("{s}:\n", .{symbol_name});
-                if (static_var.initializer != 0) s.writeFmt("\t.long {d}\n", .{static_var.initializer}) else s.write("\t.zero 4\n");
+                if (init_value != 0) {
+                    const value: i64 = switch (static_var.initializer) {
+                        .Int => |i| i,
+                        .Long => |l| l,
+                    };
+                    s.writeFmt("\t.long {d}\n", .{value});
+                } else {
+                    const size: usize = switch (static_var.initializer) {
+                        .Int => 4,
+                        .Long => 8,
+                    };
+                    s.writeFmt("\t.zero {d}\n", .{size});
+                }
             },
         }
     }
@@ -91,106 +109,71 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
             switch (builtin.os.tag) {
                 .linux => {
                     var add_plt = false;
-                    if (s.symbol_table.get(call)) |symbol| {
-                        if (symbol == .Fn and !symbol.Fn.defined) {
+                    if (s.backend_symbols.get(call)) |symbol| {
+                        if (symbol == .FnEntry and !symbol.FnEntry.is_defined) {
                             add_plt = true;
                         }
                     }
-                    s.writeFmt("\tcall\t{s}", .{call});
+                    s.writeFmt("\t{f}\t{s}", .{ instruction, call });
                     s.writeFmt("{s}\n", .{if (!add_plt) "" else "@PLT"});
                 },
                 .macos => {
-                    s.writeFmt("\tcall\t_{s}\n", .{call});
+                    s.writeFmt("\t{f}\t_{s}\n", .{ instruction, call });
                 },
                 else => |os| std.debug.panic("Unsupported OS for code emission: {s}", .{@tagName(os)}),
             }
         },
-        .DeallocateStack => |size| {
-            s.writeFmt("\taddq\t${d}, {f}\n", .{ size, Asm.Register.register(.sp, .qword) });
-        },
         .Push => |push| {
-            s.writeFmt("\tpushq\t{s}\n", .{s.fmtOperand(push)});
+            s.writeFmt("\t{f}\t{s}\n", .{ instruction, s.fmtOperand(push) });
         },
         .Mov => |mov| {
-            s.writeFmt("\tmovl\t{s}, {s}\n", .{
+            s.writeFmt("\t{f}\t{s}, {s}\n", .{
+                instruction,
                 s.fmtOperand(mov.src),
                 s.fmtOperand(mov.dst),
             });
         },
+        .Movsx => |movsx| {
+            s.writeFmt("\t{f}\t{s}, {s}\n", .{
+                instruction,
+                s.fmtOperand(movsx.src),
+                s.fmtOperand(movsx.dst),
+            });
+        },
         .Unary => |unary| {
-            s.writeFmt("\t{s}\t{s}\n", .{
-                fmtUnaryOperator(unary.operator),
+            s.writeFmt("\t{f}\t{s}\n", .{
+                instruction,
                 s.fmtOperand(unary.operand),
             });
         },
         .Binary => |binary| {
-            const op = switch (binary.operator) {
-                .Add => "addl",
-                .Subtract => "subl",
-                .Multiply => "imull",
-                .LeftShift => "sall", // doing arthmetic shift - shll for logical shift
-                .RightShift => "sarl", // doing arthmetic shift - shrl for logical
-                .BitAnd => "andl",
-                .BitOr => "orl",
-                .BitXor => "xorl",
-            };
             const dst = s.fmtOperand(binary.dst);
             const src = s.fmtOperand(binary.operand);
-            s.writeFmt("\t{s}\t{s}, {s}\n", .{ op, src, dst });
+            s.writeFmt("\t{f}\t{s}, {s}\n", .{ instruction, src, dst });
         },
-        .IDiv => |operand| {
-            const op = "idivl";
-            const divider = s.fmtOperand(operand);
-            s.writeFmt("\t{s}\t{s}\n", .{ op, divider });
+        .IDiv => |it| {
+            const divider = s.fmtOperand(it.operand);
+            s.writeFmt("\t{f}\t{s}\n", .{ instruction, divider });
         },
         .Cmp => |cmp| {
-            const op = "cmpl";
             const left = s.fmtOperand(cmp.op1);
             const right = s.fmtOperand(cmp.op2);
-            s.writeFmt("\t{s}\t{s}, {s}\n", .{ op, left, right });
+            s.writeFmt("\t{f}\t{s}, {s}\n", .{ instruction, left, right });
         },
         .Jmp => |jmp| {
-            const op = "jmp";
-            s.writeFmt("\t{s}\t{s}\n", .{ op, jmp });
+            s.writeFmt("\t{f}\t{s}\n", .{ instruction, jmp });
         },
         .JmpCC => |jmp_cc| {
-            const op = switch (jmp_cc.condition_code) {
-                .EqualEqual => "je",
-                .NotEqual => "jne",
-                .GreaterThan => "jg",
-                .GreaterThanEqual => "jge",
-                .LessThan => "jl",
-                .LessThanEqual => "jle",
-            };
-            s.writeFmt("\t{s}\t{s}\n", .{ op, jmp_cc.label });
+            s.writeFmt("\t{f}\t{s}\n", .{ instruction, jmp_cc.label });
         },
         .SetCC => |set_cc| {
-            const op = switch (set_cc.condition_code) {
-                .EqualEqual => "sete",
-                .NotEqual => "setne",
-                .GreaterThan => "setg",
-                .GreaterThanEqual => "setge",
-                .LessThan => "setl",
-                .LessThanEqual => "setle",
-            };
-            s.writeFmt("\t{s}\t{s}\n", .{ op, s.fmtOperand(set_cc.dst) });
+            s.writeFmt("\t{f}\t{s}\n", .{ instruction, s.fmtOperand(set_cc.dst) });
         },
         .Label => |label| {
             s.writeFmt("{s}:\n", .{label});
         },
         .Cdq => {
-            s.write("\tcdq\n");
-        },
-        .AllocateStack => |stack_size| {
-            if (stack_size != 0) {
-                s.writeFmt("\tsubq\t${d}, {f}\n", .{
-                    stack_size,
-                    Asm.Register.register(.sp, .qword),
-                });
-                s.write("\t# ^^^\tPrologue\n");
-            } else {
-                s.write("\t# ^^^\tPrologue (no stack allocation needed)\n");
-            }
+            s.writeFmt("\t{f}\n", .{instruction});
         },
         .Ret => {
             // epilogue
@@ -203,7 +186,7 @@ fn emitInstructions(s: Self, instruction: Asm.Instruction) void {
                 },
             );
             s.writeFmt("\tpopq\t{f}\n", .{Asm.Register.register(.bp, .qword)});
-            s.write("\tret\n");
+            s.writeFmt("\t{f}\n", .{instruction});
         },
     }
 }
@@ -246,5 +229,5 @@ const Asm = @import("Codegen.zig").Asm;
 const ArrayList = @import("from_scratch.zig").ArrayList;
 const AnyWriter = std.io.AnyWriter;
 const Allocator = std.mem.Allocator;
-const SymbolTable = @import("SymbolTable.zig");
+const BackendSymbolTable = @import("BackendSymbolTable.zig");
 const Printer = @import("util.zig").Printer;
