@@ -51,7 +51,8 @@ pub fn parse(opt: Options) ParseError!*Ast.Program {
 
 fn print(arena: Allocator, program: *const Ast.Program) void {
     var collector = Printer.init(arena);
-    AstPrinter.print(collector.writer(), program);
+    var ast_printer = AstPrinter.init(collector.writer(), false);
+    ast_printer.print(program);
     collector.printToStdErr(.{ .show_whitespace = true }) catch unreachable;
 }
 
@@ -198,7 +199,6 @@ fn parseDecl(p: *Self, option: ParseDeclOption) ParseError!*Ast.Decl {
 
 fn parseVarDecl(p: *Self) ParseError!*Ast.VarDecl {
     const var_type, const storage_class = try p.parseTypeAndStorageClass();
-    std.log.debug("{any}", .{var_type});
     const ident_token = try p.consume(.Ident);
     const ident = ident_token.lexeme;
 
@@ -1604,83 +1604,89 @@ const ParseError = error{
 } || CompilerError;
 
 pub const AstPrinter = struct {
-    pub fn print(writer: *std.Io.Writer, pg: *const Ast.Program) void {
-        write(writer, "-- AST --\n");
-        write(writer, "program\n");
+    writer: *std.Io.Writer,
+    print_expr_type: bool,
+    pub fn init(writer: *std.Io.Writer, print_expr_type: bool) @This() {
+        return .{ .writer = writer, .print_expr_type = print_expr_type };
+    }
+
+    pub fn print(self: *@This(), pg: *const Ast.Program) void {
+        self.write("-- AST --\n");
+        self.write("program\n");
 
         for (pg.decls.items) |decl| {
             switch (decl.*) {
                 .Fn => |fn_decl| {
-                    printFnDecl(writer, fn_decl, 1, true);
-                    write(writer, "\n");
+                    self.printFnDecl(fn_decl, 1, true);
+                    self.write("\n");
                 },
                 .Var => |var_decl| {
-                    printVarDecl(writer, var_decl, 1, false);
-                    write(writer, ";");
+                    self.printVarDecl(var_decl, 1, false);
+                    self.write(";");
                 },
             }
         }
 
-        write(writer, "\n");
+        self.write("\n");
     }
 
-    fn printFnDecl(writer: *std.Io.Writer, fn_decl: *const Ast.FnDecl, depth: usize, indent: bool) void {
-        if (indent) printSpace(writer, depth);
-        writeFmt(writer, "int {s}( ", .{fn_decl.name});
+    fn printFnDecl(self: *@This(), fn_decl: *const Ast.FnDecl, depth: usize, indent: bool) void {
+        if (indent) self.printSpace(depth);
+        self.writeFmt("int {s}( ", .{fn_decl.name});
         for (fn_decl.params.items, 0..) |param, i| {
-            if (fn_decl.body != null) write(writer, "int ");
-            writeFmt(writer, "{s}", .{param.ident});
+            if (fn_decl.body != null) self.write("int ");
+            self.writeFmt("{s}", .{param.ident});
             if (i < fn_decl.params.items.len - 1) {
-                write(writer, ", ");
+                self.write(", ");
             }
         }
-        write(writer, " )");
+        self.write(" )");
 
         if (fn_decl.body) |body| {
-            write(writer, "\n");
-            printSpace(writer, depth);
-            write(writer, "{\n");
-            printBlock(writer, body, depth + 1, true);
-            printSpace(writer, depth);
-            write(writer, "}");
+            self.write("\n");
+            self.printSpace(depth);
+            self.write("{\n");
+            self.printBlock(body, depth + 1, true);
+            self.printSpace(depth);
+            self.write("}");
         } else {
-            write(writer, ";\n");
+            self.write(";\n");
         }
     }
 
-    fn printBlock(writer: *std.Io.Writer, block: *const Ast.Block, depth: usize, new_line: bool) void {
+    fn printBlock(self: *@This(), block: *const Ast.Block, depth: usize, new_line: bool) void {
         for (block.block_item.items) |item| {
-            printSpace(writer, depth);
-            printBlockItem(writer, item, depth, new_line);
+            self.printSpace(depth);
+            self.printBlockItem(item, depth, new_line);
         }
     }
 
-    fn printBlockItem(writer: *std.Io.Writer, block_item: *const Ast.BlockItem, depth: usize, new_line: bool) void {
+    fn printBlockItem(self: *@This(), block_item: *const Ast.BlockItem, depth: usize, new_line: bool) void {
         switch (block_item.*) {
-            .Stmt => |stmt| printStmt(writer, stmt, depth),
-            .Decl => |decl| printDecl(writer, decl, depth, new_line),
+            .Stmt => |stmt| self.printStmt(stmt, depth),
+            .Decl => |decl| self.printDecl(decl, depth, new_line),
         }
     }
 
-    fn printDecl(writer: *std.Io.Writer, decl: *const Ast.Decl, depth: usize, new_line: bool) void {
+    fn printDecl(self: *@This(), decl: *const Ast.Decl, depth: usize, new_line: bool) void {
         switch (decl.*) {
-            .Fn => |fn_decl| printFnDecl(writer, fn_decl, depth, false),
-            .Var => |var_decl| printVarDecl(writer, var_decl, depth, new_line),
+            .Fn => |fn_decl| self.printFnDecl(fn_decl, depth, false),
+            .Var => |var_decl| self.printVarDecl(var_decl, depth, new_line),
         }
     }
 
-    fn printVarDecl(writer: *std.Io.Writer, var_decl: *const Ast.VarDecl, depth: usize, new_line: bool) void {
+    fn printVarDecl(self: *@This(), var_decl: *const Ast.VarDecl, depth: usize, new_line: bool) void {
         _ = depth;
-        write(writer, "int ");
-        writeFmt(writer, "{s}", .{var_decl.ident});
+        self.write("int ");
+        self.writeFmt("{s}", .{var_decl.ident});
         if (var_decl.initializer) |initializer| {
-            write(writer, " = ");
-            printExpr(writer, initializer);
+            self.write(" = ");
+            self.printExpr(initializer);
         }
-        if (new_line) write(writer, ";\n");
+        if (new_line) self.write(";\n");
     }
 
-    fn printIfStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printIfStmt(self: *@This(), stmt: *const Ast.Stmt, depth: usize) void {
         const if_stmt = switch (stmt.*) {
             .If => |if_stmt| if_stmt,
             else => std.debug.panic(
@@ -1688,33 +1694,33 @@ pub const AstPrinter = struct {
                 .{},
             ),
         };
-        write(writer, "if (");
-        printExpr(writer, if_stmt.condition);
-        write(writer, ")\n");
+        self.write("if (");
+        self.printExpr(if_stmt.condition);
+        self.write(")\n");
 
         const if_depth = if (if_stmt.then.* == .Compound) depth else depth + 1;
-        printSpace(writer, if_depth);
-        printStmt(writer, if_stmt.then, if_depth);
+        self.printSpace(if_depth);
+        self.printStmt(if_stmt.then, if_depth);
         if (if_stmt.@"else") |else_stmt| {
             if (if_stmt.then.* == .Compound) {
-                write(writer, "\n");
+                self.write("\n");
             }
-            printSpace(writer, depth);
-            write(writer, "else");
+            self.printSpace(depth);
+            self.write("else");
             if (else_stmt.* == .If) {
-                write(writer, " ");
-                printIfStmt(writer, else_stmt, depth);
+                self.write(" ");
+                self.printIfStmt(else_stmt, depth);
             } else {
-                write(writer, "\n");
+                self.write("\n");
                 const else_depth = if (if_stmt.then.* == .Compound) depth else depth + 1;
-                printSpace(writer, else_depth);
-                printStmt(writer, else_stmt, else_depth);
+                self.printSpace(else_depth);
+                self.printStmt(else_stmt, else_depth);
             }
         }
-        write(writer, "\n");
+        self.write("\n");
     }
 
-    fn printDoWhileStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printDoWhileStmt(self: *@This(), stmt: *const Ast.Stmt, depth: usize) void {
         const do_stmt = switch (stmt.*) {
             .DoWhile => |do_while| do_while,
             else => std.debug.panic(
@@ -1722,16 +1728,16 @@ pub const AstPrinter = struct {
                 .{},
             ),
         };
-        write(writer, "do\n");
-        printSpace(writer, depth);
+        self.write("do\n");
+        self.printSpace(depth);
         const do_depth = if (do_stmt.body.* == .Compound) depth else depth + 1;
-        printStmt(writer, do_stmt.body, do_depth);
-        write(writer, " while ( ");
-        printExpr(writer, do_stmt.condition);
-        write(writer, " );\n");
+        self.printStmt(do_stmt.body, do_depth);
+        self.write(" while ( ");
+        self.printExpr(do_stmt.condition);
+        self.write(" );\n");
     }
 
-    fn printWhileStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printWhileStmt(self: *@This(), stmt: *const Ast.Stmt, depth: usize) void {
         const while_stmt = switch (stmt.*) {
             .While => |while_stmt_| while_stmt_,
             else => std.debug.panic(
@@ -1739,18 +1745,18 @@ pub const AstPrinter = struct {
                 .{},
             ),
         };
-        write(writer, "while ( ");
-        printExpr(writer, while_stmt.condition);
-        write(writer, " )\n");
+        self.write("while ( ");
+        self.printExpr(while_stmt.condition);
+        self.write(" )\n");
 
         const while_depth = if (while_stmt.body.* == .Compound) depth else depth + 1;
 
-        printSpace(writer, depth);
-        printStmt(writer, while_stmt.body, while_depth);
-        write(writer, "\n");
+        self.printSpace(depth);
+        self.printStmt(while_stmt.body, while_depth);
+        self.write("\n");
     }
 
-    fn printForStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printForStmt(self: *@This(), stmt: *const Ast.Stmt, depth: usize) void {
         const for_stmt = switch (stmt.*) {
             .For => |for_stmt_| for_stmt_,
             else => std.debug.panic(
@@ -1758,185 +1764,196 @@ pub const AstPrinter = struct {
                 .{},
             ),
         };
-        write(writer, "for (");
+        self.write("for (");
         switch (for_stmt.init.*) {
-            .Decl => |decl| printDecl(writer, decl, depth + 1, false),
-            .Expr => |expr| if (expr) |initializer| printExpr(writer, initializer),
+            .Decl => |decl| self.printDecl(decl, depth + 1, false),
+            .Expr => |expr| if (expr) |initializer| self.printExpr(initializer),
         }
-        write(writer, " ; ");
+        self.write(" ; ");
 
         if (for_stmt.condition) |condition| {
-            printExpr(writer, condition);
+            self.printExpr(condition);
         }
-        write(writer, " ; ");
+        self.write(" ; ");
 
         if (for_stmt.post) |post| {
-            printExpr(writer, post);
+            self.printExpr(post);
         }
 
-        write(writer, " )\n");
+        self.write(" )\n");
 
-        printSpace(writer, depth);
+        self.printSpace(depth);
         const for_depth = if (for_stmt.body.* == .Compound) depth else depth + 1;
-        printStmt(writer, for_stmt.body, for_depth);
-        write(writer, "\n");
+        self.printStmt(for_stmt.body, for_depth);
+        self.write("\n");
     }
 
-    fn printStmt(writer: *std.Io.Writer, stmt: *const Ast.Stmt, depth: usize) void {
+    fn printStmt(self: *@This(), stmt: *const Ast.Stmt, depth: usize) void {
         switch (stmt.*) {
             .Switch => |switch_stmt| {
-                write(writer, "switch (");
-                printExpr(writer, switch_stmt.condition);
-                write(writer, ")\n");
-                printSpace(writer, depth);
-                write(writer, "{\n");
+                self.write("switch (");
+                self.printExpr(switch_stmt.condition);
+                self.write(")\n");
+                self.printSpace(depth);
+                self.write("{\n");
                 for (switch_stmt.body.items) |item| {
                     if (item.* == .Stmt and item.Stmt.* == .Case) {
-                        printSpace(writer, depth + 1);
+                        self.printSpace(depth + 1);
                     } else if (item.* == .Stmt and item.Stmt.* == .Default) {
-                        printSpace(writer, depth + 1);
+                        self.printSpace(depth + 1);
                     } else {
-                        printSpace(writer, depth + 2);
+                        self.printSpace(depth + 2);
                     }
-                    printBlockItem(writer, item, depth, true);
+                    self.printBlockItem(item, depth, true);
                 }
-                printSpace(writer, depth);
-                write(writer, "}\n");
+                self.printSpace(depth);
+                self.write("}\n");
             },
             .Case => |case_stmt| {
-                write(writer, "case ");
-                writeFmt(writer, "{s}:\n", .{case_stmt.value});
+                self.write("case ");
+                self.writeFmt("{s}:\n", .{case_stmt.value});
             },
             .Default => {
-                write(writer, "default:\n");
+                self.write("default:\n");
             },
             .Break => {
-                write(writer, "break");
-                write(writer, ";\n");
+                self.write("break");
+                self.write(";\n");
             },
             .Continue => {
-                write(writer, "continue");
-                write(writer, ";\n");
+                self.write("continue");
+                self.write(";\n");
             },
-            .DoWhile => printDoWhileStmt(writer, stmt, depth),
-            .While => printWhileStmt(writer, stmt, depth),
-            .For => printForStmt(writer, stmt, depth),
+            .DoWhile => self.printDoWhileStmt(stmt, depth),
+            .While => self.printWhileStmt(stmt, depth),
+            .For => self.printForStmt(stmt, depth),
             .Label => |label_stmt| {
-                writeFmt(writer, "{s}:\n", .{label_stmt.ident});
-                printStmt(writer, label_stmt.stmt, depth + 1);
+                self.writeFmt("{s}:\n", .{label_stmt.ident});
+                self.printStmt(label_stmt.stmt, depth + 1);
             },
             .Goto => |goto_stmt| {
-                writeFmt(writer, "goto {s};\n", .{goto_stmt.ident});
+                self.writeFmt("goto {s};\n", .{goto_stmt.ident});
             },
             .If => {
-                printIfStmt(writer, stmt, depth);
+                self.printIfStmt(stmt, depth);
             },
             .Compound => |compound_stmt| {
-                write(writer, "{\n");
-                printBlock(writer, compound_stmt.body, depth + 1, true);
-                printSpace(writer, depth);
-                write(writer, "}");
+                self.write("{\n");
+                self.printBlock(compound_stmt.body, depth + 1, true);
+                self.printSpace(depth);
+                self.write("}");
             },
             .Return => |return_stmt| {
-                write(writer, "return");
-                write(writer, " ");
-                printExpr(writer, return_stmt.expr);
-                write(writer, ";\n");
+                self.write("return");
+                self.write(" ");
+                self.printExpr(return_stmt.expr);
+                self.write(";\n");
             },
             .Expr => |expr| {
-                printExpr(writer, expr.expr);
-                write(writer, ";\n");
+                self.printExpr(expr.expr);
+                self.write(";\n");
             },
-            .Null => write(writer, ";\n"),
+            .Null => self.write(";\n"),
         }
     }
-    fn printBuiltinType(writer: *std.Io.Writer, typez: *const Ast.BuiltinType) void {
+    fn printBuiltinType(self: *@This(), typez: *const Ast.BuiltinType) void {
         switch (typez.*) {
-            .Int => write(writer, "int"),
-            .Long => write(writer, "long"),
-            else => |t| std.debug.panic("** Compiler Bug ** printBuiltinType called on function type. {s}", .{@tagName(t)}),
+            .Int => self.write("int"),
+            .Long => self.write("long"),
+            else => |t| std.debug.panic("** Compiler Bug ** self.printBuiltinType called on function type. {s}", .{@tagName(t)}),
         }
     }
-    fn printExpr(writer: *std.Io.Writer, expr: *const Ast.Expr) void {
+
+    fn printType(self: *@This(), typez: ?*const Ast.BuiltinType) void {
+        if (self.print_expr_type) {
+            std.debug.assert(typez != null);
+            self.write("<");
+            self.printBuiltinType(typez.?);
+            self.write(">");
+        }
+    }
+
+    fn printExpr(self: *@This(), expr: *const Ast.Expr) void {
+        self.printType(expr.getType());
         switch (expr.*) {
             .Cast => |cast_expr| {
-                write(writer, "(");
-                printBuiltinType(writer, cast_expr.target_type);
-                write(writer, ")");
-                printExpr(writer, cast_expr.expr);
+                self.write("(");
+                self.printBuiltinType(cast_expr.target_type);
+                self.write(")");
+                self.printExpr(cast_expr.expr);
             },
             .Prefix => |prefix_expr| {
-                writeFmt(writer, "{s}", .{
+                self.writeFmt("{s}", .{
                     switch (prefix_expr.operator) {
                         .Add => "++",
                         .Subtract => "--",
                     },
                 });
-                printExpr(writer, prefix_expr.expr);
+                self.printExpr(prefix_expr.expr);
             },
             .FnCall => |fn_call_expr| {
-                writeFmt(writer, "{s}(", .{fn_call_expr.ident});
+                self.writeFmt("{s}(", .{fn_call_expr.ident});
                 for (fn_call_expr.args.items, 0..) |arg, i| {
-                    printExpr(writer, arg);
+                    self.printExpr(arg);
                     if (i < fn_call_expr.args.items.len - 1) {
-                        write(writer, ", ");
+                        self.write(", ");
                     }
                 }
-                write(writer, ")");
+                self.write(")");
             },
             .Ternary => |ternary_expr| {
-                printExpr(writer, ternary_expr.condition);
-                write(writer, " ? ");
-                printExpr(writer, ternary_expr.then);
-                write(writer, " : ");
-                printExpr(writer, ternary_expr.@"else");
+                self.printExpr(ternary_expr.condition);
+                self.write(" ? ");
+                self.printExpr(ternary_expr.then);
+                self.write(" : ");
+                self.printExpr(ternary_expr.@"else");
             },
             .Var => |var_expr| {
-                writeFmt(writer, "{s}", .{var_expr.ident});
+                self.writeFmt("{s}", .{var_expr.ident});
             },
             .Postfix => |postfix_expr| {
-                printExpr(writer, postfix_expr.expr);
+                self.printExpr(postfix_expr.expr);
                 switch (postfix_expr.operator) {
-                    .Add => write(writer, "++"),
-                    .Subtract => write(writer, "--"),
+                    .Add => self.write("++"),
+                    .Subtract => self.write("--"),
                 }
             },
             .Group => |group_expr| {
-                write(writer, "(");
-                printExpr(writer, group_expr.expr);
-                write(writer, ")");
+                self.write("(");
+                self.printExpr(group_expr.expr);
+                self.write(")");
             },
             .Assignment => |assignment_expr| {
-                printExpr(writer, assignment_expr.dst);
-                write(writer, " = ");
-                printExpr(writer, assignment_expr.src);
+                self.printExpr(assignment_expr.dst);
+                self.write(" = ");
+                self.printExpr(assignment_expr.src);
             },
             .Constant => |constant_expr| {
                 switch (constant_expr.value) {
                     .Int => |int_value| {
-                        writeFmt(writer, "{d}", .{int_value});
+                        self.writeFmt("{d}", .{int_value});
                     },
                     .Long => |long_value| {
-                        writeFmt(writer, "{d}", .{long_value});
+                        self.writeFmt("{d}", .{long_value});
                     },
                 }
             },
             .Unary => |unary_expr| {
-                write(writer, "(");
-                writeFmt(writer, "{s}", .{
+                self.write("(");
+                self.writeFmt("{s}", .{
                     switch (unary_expr.operator) {
                         .Negate => "-",
                         .BitNot => "~",
                         .Not => "!",
                     },
                 });
-                printExpr(writer, unary_expr.expr);
-                write(writer, ")");
+                self.printExpr(unary_expr.expr);
+                self.write(")");
             },
             .Binary => |binary_expr| {
-                write(writer, "(");
-                printExpr(writer, binary_expr.left);
-                writeFmt(writer, " {s} ", .{
+                self.write("(");
+                self.printExpr(binary_expr.left);
+                self.writeFmt(" {s} ", .{
                     switch (binary_expr.operator) {
                         .Add => "+",
                         .Subtract => "-",
@@ -1958,22 +1975,22 @@ pub const AstPrinter = struct {
                         .GreaterThanEqual => ">=",
                     },
                 });
-                printExpr(writer, binary_expr.right);
-                write(writer, ")");
+                self.printExpr(binary_expr.right);
+                self.write(")");
             },
         }
     }
 
-    fn printSpace(writer: *std.Io.Writer, depth: usize) void {
-        for (0..depth) |_| write(writer, "  ");
+    fn printSpace(self: *@This(), depth: usize) void {
+        for (0..depth) |_| self.write("  ");
     }
 
-    fn write(w: *std.Io.Writer, bytes: []const u8) void {
-        _ = w.write(bytes) catch unreachable;
+    fn write(self: *@This(), bytes: []const u8) void {
+        _ = self.writer.write(bytes) catch unreachable;
     }
 
-    fn writeFmt(w: *std.Io.Writer, comptime fmt: []const u8, args: anytype) void {
-        _ = w.print(fmt, args) catch unreachable;
+    fn writeFmt(self: *@This(), comptime fmt: []const u8, args: anytype) void {
+        _ = self.writer.print(fmt, args) catch unreachable;
     }
 };
 
@@ -2009,7 +2026,7 @@ pub fn isSameType(type1: ?*const Ast.BuiltinType, type2: ?*const Ast.BuiltinType
 
 pub fn getCommonType(allocator: Allocator, type1: *Ast.BuiltinType, type2: *Ast.BuiltinType) struct { bool, ?*Ast.BuiltinType } {
     if (isSameType(type1, type2)) return .{ true, type1 };
-    if (type1.* == .Fn or type2.* == .Fn) return .{ false, .fnType(allocator, type1.Fn.return_type, type1.Fn.params) };
+    if (type1.* == .Fn or type2.* == .Fn) @panic("not implemented - fn common type checking");
     if (type1.* == .Long or type2.* == .Long) return .{ false, .longType(allocator) };
     return .{ false, .intType(allocator) };
 }

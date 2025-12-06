@@ -25,7 +25,7 @@ pub fn check(opt: SemaOptions) SemaError!void {
     };
 }
 
-fn checkPg(s: *Self, pg: *const Ast.Program) SemaError!void {
+fn checkPg(s: *Self, pg: *Ast.Program) SemaError!void {
     for (pg.decls.items) |decl| {
         switch (decl.*) {
             .Fn => |fn_decl| try s.checkFn(fn_decl, true),
@@ -34,7 +34,7 @@ fn checkPg(s: *Self, pg: *const Ast.Program) SemaError!void {
     }
 }
 
-fn getVarInitialValue(s: Self, var_decl: *const Ast.VarDecl) SemaError!Symbol.InitialValue {
+fn getVarInitialValue(s: *Self, var_decl: *Ast.VarDecl) SemaError!Symbol.InitialValue {
     const initializer = var_decl.initializer orelse {
         if (var_decl.storage_class == .Extern) {
             return .no_initializer;
@@ -46,9 +46,12 @@ fn getVarInitialValue(s: Self, var_decl: *const Ast.VarDecl) SemaError!Symbol.In
     return .initialValue(.init(initializer.Constant.value));
 }
 
-fn checkFileScopeVarDecl(s: Self, var_decl: *const Ast.VarDecl) SemaError!void {
+fn checkFileScopeVarDecl(s: *Self, var_decl: *Ast.VarDecl) SemaError!void {
     var initial_value = try s.getVarInitialValue(var_decl);
-    if (var_decl.initializer) |init| init.setType(var_decl.type);
+    if (var_decl.initializer) |init| {
+        try s.checkExpr(init);
+        init.setType(var_decl.type);
+    }
 
     var is_global = var_decl.storage_class != .Static;
 
@@ -183,13 +186,19 @@ fn checkDecl(s: *Self, decl: *Ast.Decl, opt: CheckDeclOption) SemaError!void {
     }
 }
 
-fn checkVarDecl(s: Self, var_decl: *Ast.VarDecl, static_allowed: bool) SemaError!void {
+fn checkVarDecl(s: *Self, var_decl: *Ast.VarDecl, static_allowed: bool) SemaError!void {
     const storage_class = var_decl.storage_class orelse {
         s.symbol_table.put(var_decl.ident, .localVarSymbol(s.symbol_table.arena, var_decl.ident, var_decl.type.clone(s.symbol_table.arena)));
-        if (var_decl.initializer) |initializer| try s.checkExpr(initializer);
+        if (var_decl.initializer) |initializer| {
+            try s.checkExpr(initializer);
+            var_decl.type = initializer.getType().?;
+        }
         return;
     };
-
+    if (var_decl.initializer) |initializer| {
+        try s.checkExpr(initializer);
+        var_decl.type = initializer.getType().?;
+    }
     switch (storage_class) {
         .Extern => {
             if (var_decl.initializer != null) {
@@ -263,6 +272,7 @@ fn checkStmt(s: *Self, stmt: *Ast.Stmt) SemaError!void {
             try s.checkStmt(for_stmt.body);
         },
         .Switch => |switch_stmt| {
+            try s.checkExpr(switch_stmt.condition);
             if (switch_stmt.condition.* == .Var) {
                 if (s.symbol_table.get(switch_stmt.condition.Var.ident)) |saved_ident| {
                     if (saved_ident == .Fn) {
@@ -284,7 +294,7 @@ fn checkStmt(s: *Self, stmt: *Ast.Stmt) SemaError!void {
     }
 }
 
-fn checkExpr(s: Self, expr: *Ast.Expr) SemaError!void {
+fn checkExpr(s: *Self, expr: *Ast.Expr) SemaError!void {
     switch (expr.*) {
         .Cast => |cast_expr| {
             try s.checkExpr(cast_expr.expr);
@@ -292,7 +302,7 @@ fn checkExpr(s: Self, expr: *Ast.Expr) SemaError!void {
         },
         .Prefix => |prefix_expr| {
             try s.checkExpr(prefix_expr.expr);
-            expr.setType(expr.getType() orelse std.debug.panic("** compiler bug ** prefix expr should have type here", .{}));
+            expr.setType(prefix_expr.expr.getType().?);
         },
         .Var => |var_expr| {
             if (s.symbol_table.get(var_expr.ident)) |saved_ident| {

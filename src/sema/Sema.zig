@@ -25,7 +25,8 @@ fn print(opt: SemaOptions, label: []const u8) void {
     var printer = Printer.init(opt.arena);
     const writer = printer.writer();
     writer.print("-- {s} --\n", .{label}) catch unreachable;
-    AstPrinter.print(writer, opt.program);
+    var ast_printer = AstPrinter.init(writer, opt.print_expr_type);
+    ast_printer.print(opt.program);
     printer.printToStdErr(.{ .show_whitespace = true }) catch unreachable;
 }
 
