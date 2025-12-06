@@ -58,17 +58,17 @@ fn runCompiler(gpa: Allocator) !void {
     compiler_ctx.deinitParserArena();
     compiler_ctx.deinitSemaArena();
 
-    _ = tacky_pg;
+    const codegen_pg = if (args.flag.codegen) Codegen.emit(.{
+        .arena = compiler_ctx.codegenArena(),
+        .scratch_arena = compiler_ctx.scratchArena(),
+        .pg = tacky_pg orelse return error.BooooYourEyeRrrrIsNull,
+        .symbol_table = &compiler_ctx.symbol_table,
+        .print_codegen = true,
+    }) else null;
+    compiler_ctx.resetScratchArena();
+    compiler_ctx.deinitTackyArena();
 
-    // const codegen_pg = if (args.flag.codegen) Codegen.emit(.{
-    //     .arena = compiler_ctx.codegenArena(),
-    //     .scratch_arena = compiler_ctx.scratchArena(),
-    //     .pg = tacky_pg orelse return error.BooooYourEyeRrrrIsNull,
-    //     .symbol_table = &compiler_ctx.symbol_table,
-    //     .print_codegen = true,
-    // }) else null;
-    // compiler_ctx.resetScratchArena();
-    // compiler_ctx.deinitTackyArena();
+    _ = codegen_pg;
 
     // if (args.flag.assemble) {
     //     try CodeEmission.emit(.{
@@ -107,7 +107,7 @@ const Lexer = @import("Lexer.zig");
 const AstParser = @import("AstParser.zig");
 const Sema = @import("sema/Sema.zig");
 const TackyIR = @import("TackyIR.zig");
-// const Codegen = @import("Codegen.zig");
+const Codegen = @import("Codegen.zig");
 // const CodeEmission = @import("CodeEmission.zig");
 const compiler_driver = @import("compiler_driver.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
