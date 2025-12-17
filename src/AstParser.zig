@@ -1935,7 +1935,7 @@ pub const AstPrinter = struct {
                         self.writeFmt("{d}", .{int_value});
                     },
                     .Long => |long_value| {
-                        self.writeFmt("{d}", .{long_value});
+                        self.writeFmt("{d}L", .{long_value});
                     },
                 }
             },

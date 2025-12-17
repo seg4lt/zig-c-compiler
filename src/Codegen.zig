@@ -94,7 +94,8 @@ const Stage1 = struct {
         const stack_args = if (fn_params.len > COUNT_REGISTER_ARGS) fn_params[COUNT_REGISTER_ARGS..] else &.{};
 
         for (register_args, 0..) |reg_param, i| {
-            const param_size = getSizeFromType(fn_entry.type.Fn.params.items[i]);
+            // const param_size = getSizeFromType(fn_entry.type.Fn.params.items[i]);
+            const param_size: Asm.RegisterSize = .qword;
             const reg_to_use = ARGS_REGISTER[i];
             const asm_arg: Asm.Operand = .pseudo(reg_param);
             instructions.append(.mov(.register(reg_to_use, param_size), asm_arg, param_size));
@@ -228,7 +229,7 @@ const Stage1 = struct {
             .Copy => |copy| {
                 const src = valToOperand(s.arena, copy.src);
                 const dst = valToOperand(s.arena, copy.dst);
-                instructions.append(.mov(src, dst, getSizeFromVal(copy.src, s.symbol_table)));
+                instructions.append(.mov(src, dst, getSizeFromVal(copy.dst, s.symbol_table)));
             },
             .Jump => |jmp| {
                 const label = s.arena.dupe(u8, jmp) catch unreachable;
@@ -263,7 +264,8 @@ const Stage1 = struct {
                 for (register_args, 0..) |reg_arg, i| {
                     const reg_to_use = ARGS_REGISTER[i];
                     const asm_arg = valToOperand(s.arena, reg_arg);
-                    const reg_size = getSizeFromVal(reg_arg, s.symbol_table);
+                    // const reg_size = getSizeFromVal(reg_arg, s.symbol_table);
+                    const reg_size: Asm.RegisterSize = .qword;
                     instructions.append(.mov(asm_arg, .register(reg_to_use, reg_size), reg_size));
                 }
 
@@ -442,12 +444,15 @@ const Stage3 = struct {
                         instructions.append(.mov(.register(.r10, mov.size), mov.dst, mov.size));
                         continue;
                     }
-                    // this is  because these instructions all sign extend their immediate operands from 32 to 64 bits.
                     if (mov.src == .Imm) {
-                        const rs: Asm.RegisterSize = if (mov.src.Imm >= std.math.maxInt(i32)) .qword else .dword;
-                        instructions.append(.mov(mov.src, .register(.r10, rs), rs));
-                        instructions.append(.mov(.register(.r10, .dword), .register(.r11, .dword), .dword));
-                        instructions.append(.mov(.register(.r11, .dword), mov.dst, .dword));
+                        const is: Asm.RegisterSize = blk: {
+                            if (mov.dst == .Register and mov.dst.Register.size == .qword) break :blk .qword;
+                            if (mov.src.Imm >= std.math.maxInt(i32)) break :blk .qword;
+                            break :blk .dword;
+                        };
+                        instructions.append(.mov(mov.src, .register(.r10, is), is));
+                        instructions.append(.mov(.register(.r10, is), .register(.r11, is), is));
+                        instructions.append(.mov(.register(.r11, is), mov.dst, is));
                         continue;
                     }
                     instructions.append(inst);
@@ -1091,7 +1096,7 @@ const Printer = struct {
     }
 
     fn printRegister(s: @This(), reg: Asm.Register) void {
-        s.writeFmt("Register({f})", .{reg});
+        s.writeFmt("Register({any})", .{reg});
     }
 
     fn printSpace(s: @This(), depth: usize) void {
