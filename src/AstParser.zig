@@ -1677,7 +1677,8 @@ pub const AstPrinter = struct {
 
     fn printVarDecl(self: *@This(), var_decl: *const Ast.VarDecl, depth: usize, new_line: bool) void {
         _ = depth;
-        self.write("int ");
+        self.printBuiltinType(var_decl.type);
+        self.write(" ");
         self.writeFmt("{s}", .{var_decl.ident});
         if (var_decl.initializer) |initializer| {
             self.write(" = ");

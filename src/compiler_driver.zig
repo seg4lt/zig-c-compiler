@@ -22,7 +22,7 @@ pub const OutputType = enum {
     obj,
 };
 
-pub fn assembleAndLink(arena: Allocator, src_path_no_ext: []const u8, output_type: OutputType) void {
+pub fn assembleAndLink(arena: Allocator, src_path_no_ext: []const u8, output_type: OutputType) !void {
     const asm_file = std.fmt.allocPrint(arena, "{s}.s", .{src_path_no_ext}) catch unreachable;
     var cmd = ArrayList([]const u8).init(arena);
     cmd.append(SUPPORTING_COMPILER);
@@ -42,7 +42,7 @@ pub fn assembleAndLink(arena: Allocator, src_path_no_ext: []const u8, output_typ
     }
     var child = std.process.Child.init(cmd.items, arena);
     const result = child.spawnAndWait() catch unreachable;
-    std.debug.assert(result == .Exited);
+    if (result != .Exited or result.Exited != 0) return error.AssembleAndLinkFailed;
 }
 
 const std = @import("std");

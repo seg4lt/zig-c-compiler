@@ -339,10 +339,12 @@ fn genExpr(s: *Self, expr: *const Ast.Expr, instructions: *ArrayList(Tac.Instruc
         .Cast => |cast_expr| {
             const result = s.genExpr(cast_expr.expr, instructions);
             const expr_type = expr.getType().?;
-            if (isSameType(expr_type, cast_expr.target_type)) return result;
+            if (isSameType(expr_type, cast_expr.expr.getType())) return result;
             const dst = s.makeVar(expr_type);
             switch (expr_type.*) {
-                .Int => instructions.append(.truncate(result, dst)),
+                .Int => {
+                    instructions.append(.truncate(result, dst));
+                },
                 .Long => instructions.append(.signExtended(result, dst)),
                 else => std.debug.panic("** Compiler Bug ** - cast to unknown type: {any}", .{expr_type}),
             }

@@ -68,7 +68,6 @@ fn runCompiler(gpa: Allocator) !void {
     compiler_ctx.resetScratchArena();
     compiler_ctx.deinitTackyArena();
 
-
     if (args.flag.assemble) {
         try CodeEmission.emit(.{
             .arena = compiler_ctx.codeEmissionArena(),
@@ -84,7 +83,7 @@ fn runCompiler(gpa: Allocator) !void {
     compiler_ctx.deinitCodeEmissionArena();
 
     if (args.flag.link) {
-        assembleAndLink(
+        try assembleAndLink(
             compiler_ctx.scratchArena(),
             args.src_path[0 .. args.src_path.len - 2],
             args.output_type,

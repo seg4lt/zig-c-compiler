@@ -124,7 +124,7 @@ const Stage1 = struct {
                 const src = valToOperand(s.arena, truncate.src);
                 const dst = valToOperand(s.arena, truncate.dst);
                 // .dword for now because we only support long to int
-                instructions.append(.mov(src, dst, .dword));
+                instructions.append(.mov(src, dst, getSizeFromVal(truncate.dst, s.symbol_table)));
             },
             .Return => |ret| {
                 const size = getSizeFromVal(ret, s.symbol_table);
@@ -424,14 +424,14 @@ const Stage3 = struct {
             switch (inst) {
                 .Movsx => |movsx| {
                     if (isMemoryAddress(movsx.src) and isMemoryAddress(movsx.dst)) {
-                        // qword because int to long, so we need 8 byte regiester
-                        instructions.append(.movsx(movsx.src, .register(.r10, .dword)));
-                        instructions.append(.movsx(.register(.r10, .qword), movsx.dst));
+                        instructions.append(.movsx(movsx.src, .register(.r10, .qword)));
+                        instructions.append(.mov(.register(.r10, .qword), movsx.dst, .qword));
                         continue;
                     }
-                    if (movsx.src == .Imm and movsx.src.Imm >= std.math.maxInt(i32)) {
-                        instructions.append(.mov(movsx.src, .register(.r10, .qword), .qword));
-                        instructions.append(.movsx(.register(.r10, .qword), movsx.dst));
+                    if (movsx.src == .Imm) {
+                        instructions.append(.mov(movsx.src, .register(.r11, .dword), .dword));
+                        instructions.append(.movsx(.register(.r11, .dword), .register(.r10, .qword)));
+                        instructions.append(.mov(.register(.r10, .qword), movsx.dst, .qword));
                         continue;
                     }
                     instructions.append(inst);
@@ -443,9 +443,11 @@ const Stage3 = struct {
                         continue;
                     }
                     // this is  because these instructions all sign extend their immediate operands from 32 to 64 bits.
-                    if (mov.src == .Imm and mov.src.Imm >= std.math.maxInt(i32)) {
-                        instructions.append(.movsx(mov.src, .register(.r10, mov.size)));
-                        instructions.append(.mov(.register(.r10, mov.size), mov.dst, mov.size));
+                    if (mov.src == .Imm) {
+                        const rs: Asm.RegisterSize = if (mov.src.Imm >= std.math.maxInt(i32)) .qword else .dword;
+                        instructions.append(.mov(mov.src, .register(.r10, rs), rs));
+                        instructions.append(.mov(.register(.r10, .dword), .register(.r11, .dword), .dword));
+                        instructions.append(.mov(.register(.r11, .dword), mov.dst, .dword));
                         continue;
                     }
                     instructions.append(inst);

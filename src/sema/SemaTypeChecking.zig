@@ -154,7 +154,6 @@ fn checkFn(s: *Self, fn_decl: *Ast.FnDecl, file_scope: bool) SemaError!void {
         if (fn_decl.body) |body| {
             const fn_return_type = fn_decl.type.?.Fn.return_type;
             s.return_type_stack.append(fn_return_type);
-            std.log.debug(">> {any}", .{s.return_type_stack.items});
             defer std.debug.assert(s.return_type_stack.pop() != null);
             try s.checkBlock(body);
         }
