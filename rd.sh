@@ -19,7 +19,7 @@ if [ -n "$DOCKER" ]; then
 
     echo "Compiling ./c/main.c"
     docker-compose exec app bash -c "zig build && ./zig-out/bin/zcc -- ./c/main.c $1"
-    exit 0
+    exit $?
 fi
 
 if [ -n "$TC" ]; then

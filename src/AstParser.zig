@@ -1632,9 +1632,13 @@ pub const AstPrinter = struct {
 
     fn printFnDecl(self: *@This(), fn_decl: *const Ast.FnDecl, depth: usize, indent: bool) void {
         if (indent) self.printSpace(depth);
-        self.writeFmt("int {s}( ", .{fn_decl.name});
+        self.printBuiltinType(fn_decl.type.?.Fn.return_type);
+        self.writeFmt(" {s}( ", .{fn_decl.name});
         for (fn_decl.params.items, 0..) |param, i| {
-            if (fn_decl.body != null) self.write("int ");
+            if (fn_decl.body != null) {
+                self.printBuiltinType(fn_decl.type.?.Fn.params.items[i]);
+                self.write(" ");
+            }
             self.writeFmt("{s}", .{param.ident});
             if (i < fn_decl.params.items.len - 1) {
                 self.write(", ");

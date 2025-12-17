@@ -448,6 +448,7 @@ const Stage3 = struct {
                         const is: Asm.RegisterSize = blk: {
                             if (mov.dst == .Register and mov.dst.Register.size == .qword) break :blk .qword;
                             if (mov.src.Imm >= std.math.maxInt(i32)) break :blk .qword;
+                            if (mov.size == .qword) break :blk .qword;
                             break :blk .dword;
                         };
                         instructions.append(.mov(mov.src, .register(.r10, is), is));
