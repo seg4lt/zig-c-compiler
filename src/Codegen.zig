@@ -94,8 +94,8 @@ const Stage1 = struct {
         const stack_args = if (fn_params.len > COUNT_REGISTER_ARGS) fn_params[COUNT_REGISTER_ARGS..] else &.{};
 
         for (register_args, 0..) |reg_param, i| {
-            // const param_size = getSizeFromType(fn_entry.type.Fn.params.items[i]);
-            const param_size: Asm.RegisterSize = .qword;
+            const param_size = getSizeFromType(fn_entry.type.Fn.params.items[i]);
+            // const param_size: Asm.RegisterSize = .qword;
             const reg_to_use = ARGS_REGISTER[i];
             const asm_arg: Asm.Operand = .pseudo(reg_param);
             instructions.append(.mov(.register(reg_to_use, param_size), asm_arg, param_size));
@@ -264,8 +264,8 @@ const Stage1 = struct {
                 for (register_args, 0..) |reg_arg, i| {
                     const reg_to_use = ARGS_REGISTER[i];
                     const asm_arg = valToOperand(s.arena, reg_arg);
-                    // const reg_size = getSizeFromVal(reg_arg, s.symbol_table);
-                    const reg_size: Asm.RegisterSize = .qword;
+                    const reg_size = getSizeFromVal(reg_arg, s.symbol_table);
+                    // const reg_size: Asm.RegisterSize = .qword;
                     instructions.append(.mov(asm_arg, .register(reg_to_use, reg_size), reg_size));
                 }
 
