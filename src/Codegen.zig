@@ -283,11 +283,19 @@ const Stage1 = struct {
                 while (iter.next()) |stack_arg| {
                     const asm_arg = valToOperand(s.arena, stack_arg);
                     const stack_arg_size = getSizeFromVal(stack_arg, s.symbol_table);
-                    if (asm_arg == .Register or asm_arg == .Imm or stack_arg_size == .qword) {
+                    // need to handle Imm first because of push can't handle 64 bit imm value
+                    if (asm_arg == .Imm) {
+                        if (stack_arg_size == .qword) {
+                            instructions.append(.mov(asm_arg, .register(.r10, .qword), .qword));
+                            instructions.append(.push(.register(.r10, .qword)));
+                        } else {
+                            instructions.append(.push(asm_arg));
+                        }
+                    } else if (asm_arg == .Register or stack_arg_size == .qword) {
                         instructions.append(.push(asm_arg));
                     } else {
                         instructions.append(.mov(asm_arg, .register(.ax, .dword), .dword));
-                        instructions.append(.push(.register(.ax, .dword))); // push is always qword
+                        instructions.append(.push(.register(.ax, .dword)));
                     }
                 }
 
@@ -392,7 +400,7 @@ const Stage2 = struct {
         }
         const op_size = bs.ObjEntry.asm_size;
         // const new_offset: i64 = @as(i64, @intCast(s.variable_map.count() + 1)) * -@as(i64, (@intFromEnum(op_size)));
-        const new_offset: i64 = - (@as(i64, @as(i64, @intCast(s.stack_size)) + @as(i64, (@intFromEnum(op_size)))));
+        const new_offset: i64 = -(@as(i64, @as(i64, @intCast(s.stack_size)) + @as(i64, (@intFromEnum(op_size)))));
         s.stack_size += @intFromEnum(op_size);
         s.variable_map.put(ident, new_offset) catch unreachable;
         return .stack(new_offset);
