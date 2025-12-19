@@ -63,11 +63,11 @@ fn emitProgram(s: Self, pg: Asm.Program) void {
                 s.writeFmt("\t.balign {d}\n", .{static_var.alignment});
                 s.writeFmt("{s}:\n", .{symbol_name});
                 if (init_value != 0) {
-                    const value: i64 = switch (static_var.initializer) {
-                        .Int => |i| i,
-                        .Long => |l| l,
+                    const value: i64, const t = switch (static_var.initializer) {
+                        .Int => |i| .{ i, "long" },
+                        .Long => |l| .{ l, "quad" },
                     };
-                    s.writeFmt("\t.long {d}\n", .{value});
+                    s.writeFmt("\t.{s} {d}\n", .{ t, value });
                 } else {
                     s.writeFmt("\t.zero {d}\n", .{static_var.alignment});
                 }
