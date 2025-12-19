@@ -161,14 +161,24 @@ const Stage1 = struct {
                         const dst = valToOperand(s.arena, binary.dst);
                         instructions.append(.mov(.imm(0), dst, getSizeFromVal(binary.dst, s.symbol_table)));
 
-                        const src2 = valToOperand(s.arena, binary.right);
+                        const src2 = blk: {
+                            // can't have cmp immediate value be .qword when immediate
+                            const possible_src2 = valToOperand(s.arena, binary.right);
+                            if (getSizeFromVal(binary.right, s.symbol_table) == .qword) {
+                                const reg = Asm.Operand.register(.r10, .qword);
+                                instructions.append(.mov(possible_src2, reg, .qword));
+                                break :blk reg;
+                            }
+                            break :blk possible_src2;
+                        };
                         switch (binary.left) {
                             .Const => {
                                 const src1 = valToOperand(s.arena, binary.left);
                                 const size = getSizeFromVal(binary.left, s.symbol_table);
                                 const reg: Asm.Operand = .register(.r11, size);
                                 instructions.append(.mov(src1, reg, size));
-                                instructions.append(.cmp(src2, reg, getSizeFromVal(binary.right, s.symbol_table)));
+
+                                instructions.append(.cmp(src2, reg, getSizeFromVal(binary.dst, s.symbol_table)));
                             },
                             .Var => {
                                 const src1 = valToOperand(s.arena, binary.left);
@@ -189,7 +199,7 @@ const Stage1 = struct {
                     .LeftShift, .RightShift, .BitAnd, .BitOr, .BitXor, .Add, .Subtract, .Multiply => {
                         const left = valToOperand(s.arena, binary.left);
                         const dst = valToOperand(s.arena, binary.dst);
-                        instructions.append(.mov(left, dst, getSizeFromVal(binary.left, s.symbol_table)));
+                        instructions.append(.mov(left, dst, getSizeFromVal(binary.dst, s.symbol_table)));
 
                         const op = switch (binary.operator) {
                             .Add => Asm.BinaryOperator.Add,
@@ -203,12 +213,12 @@ const Stage1 = struct {
                             else => std.debug.panic("** Compiler Bug ** Unreachable path: expected add, sub or mul binary operator", .{}),
                         };
                         const right = valToOperand(s.arena, binary.right);
-                        instructions.append(.binary(op, right, dst, getSizeFromVal(binary.left, s.symbol_table)));
+                        instructions.append(.binary(op, right, dst, getSizeFromVal(binary.dst, s.symbol_table)));
                     },
                     .Divide, .Mod => {
                         const left = valToOperand(s.arena, binary.left);
                         const left_size = getSizeFromVal(binary.left, s.symbol_table);
-                        const first_move_dst: Asm.Operand = .register(.ax, .dword);
+                        const first_move_dst: Asm.Operand = .register(.ax, left_size);
                         instructions.append(.mov(left, first_move_dst, left_size));
 
                         instructions.append(.cdq(left_size));

@@ -71,14 +71,14 @@ int main(void) {
         return 2;
     }
 
-    // Comparison
+    // // Comparison
     i = -100;
     l = 2147483648; // 2^31
     if (!comparison()) {
         return 3;
     }
 
-    // Conditional
+    // // Conditional
     l = 8589934592l; // 2^33
     i = 10;
     if (!conditional()) {

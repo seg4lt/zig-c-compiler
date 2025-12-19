@@ -69,11 +69,7 @@ fn emitProgram(s: Self, pg: Asm.Program) void {
                     };
                     s.writeFmt("\t.long {d}\n", .{value});
                 } else {
-                    const size: usize = switch (static_var.initializer) {
-                        .Int => 4,
-                        .Long => 8,
-                    };
-                    s.writeFmt("\t.zero {d}\n", .{size});
+                    s.writeFmt("\t.zero {d}\n", .{static_var.alignment});
                 }
             },
         }

@@ -50,6 +50,7 @@ fn checkFileScopeVarDecl(s: *Self, var_decl: *Ast.VarDecl) SemaError!void {
     var initial_value = try s.getVarInitialValue(var_decl);
     if (var_decl.initializer) |init| {
         try s.checkExpr(init);
+        std.log.debug("type = {any}, ident = {s}", .{ var_decl.type, var_decl.ident });
         init.setType(var_decl.type);
     }
 
