@@ -391,7 +391,8 @@ const Stage2 = struct {
             return .stack(saved_offset.value_ptr.*);
         }
         const op_size = bs.ObjEntry.asm_size;
-        const new_offset: i64 = @as(i64, @intCast(s.variable_map.count() + 1)) * -@as(i64, (@intFromEnum(op_size)));
+        // const new_offset: i64 = @as(i64, @intCast(s.variable_map.count() + 1)) * -@as(i64, (@intFromEnum(op_size)));
+        const new_offset: i64 = - (@as(i64, @as(i64, @intCast(s.stack_size)) + @as(i64, (@intFromEnum(op_size)))));
         s.stack_size += @intFromEnum(op_size);
         s.variable_map.put(ident, new_offset) catch unreachable;
         return .stack(new_offset);

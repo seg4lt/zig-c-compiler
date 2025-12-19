@@ -1,89 +1,44 @@
-/* Test that we correctly find the common type in binary expressions */
+/* Test that function arguments, including arguments put on the stack,
+ * are converted to the corresponding parameter type */
 
-long l;
-int i;
+int foo(long a, int b, int c, int d, long e, int f, long g, int h) {
+    if (a != -1l)
+        return 1;
 
-int addition(void) {
-    // l = 2147483653
-    // i = 10
+    if (b != 2)
+        return 2;
 
-    /* The common type of i and l is long, so we should
-     * promote i to a long, then perform addition.
-     * If we instead converted l to an int, its value would be
-     * -2147483643, and the result of i + l would be -2147483633
-     */
-    long result = i + l;
-    return (result == 2147483663l);
-}
+    if (c != 0)
+        return 3;
 
-int division(void) {
-    // l = 2147483649l
-    // i = 10l
+    if (d != -5)
+        return 4;
 
-    /* The common type of i and l is long.
-     * Therefore, we should promote i to a long,
-     * then divide (resulting in 214748364),
-     * then convert back to an int (which can be done without
-     * changing the result's value, since 214748364 is within
-     * the range of int.)
+    if (e != -101l)
+        return 5;
 
-     * If instead we truncated l to an int before performing division,
-     * the result would be -2147483647 / 10, or -214748364.
-     */
-    int int_result = l / i;
-    return (int_result == 214748364);
-}
+    if (f != -123)
+        return 6;
 
-int comparison(void) {
-    // i = -100
-    // l = 2147483648, i.e. 2^31
+    if (g != -10l)
+        return 7;
 
-    /* Make sure we convert i to a long instead of converting l to an int.
-     * If we convert l to an int its value will be -2147483648,
-     * which is smaller than -100.
-     */
-    return (i <= l);
-}
+    if (h != 1234)
+        return 8;
 
-int conditional(void) {
-    // l = 8589934592l, i.e. 2^33
-    // i = 10;
-
-    /* When a conditional expression includes both int and long branches,
-     * make sure the int type is promoted to a long, rather than the long being
-     * converted to an int
-     */
-    long result = 1 ? l : i;
-    return (result == 8589934592l);
+    return 0;
 }
 
 int main(void) {
-    // Addition
-    l = 2147483653;
-    i = 10;
-    if (!addition()) {
-        return 1;
-    }
-
-    // Division
-    l = 2147483649l;
-    if (!division()) {
-        return 2;
-    }
-
-    // // Comparison
-    i = -100;
-    l = 2147483648; // 2^31
-    if (!comparison()) {
-        return 3;
-    }
-
-    // // Conditional
-    l = 8589934592l; // 2^33
-    i = 10;
-    if (!conditional()) {
-        return 4;
-    }
-
-    return 0;
+    int a = -1;
+    long int b = 4294967298;  // 2^32 + 2, becomes 2 when converted to an int
+    long c = -4294967296;     // -2^32, becoems 0 when converted to int
+    long d =
+        21474836475;  // 2^34 + 2^32 - 5, becomes -5 when converted to an int
+    int e = -101;
+    long f = -123;
+    int g = -10;
+    long h = -9223372036854774574;  // -2^63 + 1234, becomes 1234 when converted
+                                    // to an int
+    return foo(a, b, c, d, e, f, g, h);
 }
