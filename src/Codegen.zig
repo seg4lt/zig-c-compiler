@@ -161,6 +161,7 @@ const Stage1 = struct {
                         const dst = valToOperand(s.arena, binary.dst);
                         instructions.append(.mov(.imm(0), dst, getSizeFromVal(binary.dst, s.symbol_table)));
 
+                        // maybe I should do this in stage3??
                         const src2 = blk: {
                             // can't have cmp immediate value be .qword when immediate
                             const possible_src2 = valToOperand(s.arena, binary.right);
